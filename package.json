@@ -1,0 +1,54 @@
+{
+  "name": "lead-transfer-service",
+  "version": "0.1.0",
+  "description": "SaaS lead transfer: Facebook Lead Ads → Bitrix24 / Telegram",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "node --env-file=.env --import tsx/esm --watch src/index.ts",
+    "dev:backend": "node --env-file=.env --import tsx/esm src/index.ts",
+    "dev:backend:watch": "npm run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:tunnel": "powershell -ExecutionPolicy Bypass -File .\\scripts\\reverse-tunnel.ps1",
+    "dev:public": "concurrently -k -n backend,frontend,tunnel \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:tunnel\"",
+    "build": "tsc",
+    "build:frontend": "npm --prefix frontend run build",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest --watch",
+    "db:migrate": "node --env-file=.env --import tsx/esm src/db/migrate.ts",
+    "db:seed": "node --env-file=.env --import tsx/esm src/db/seed.ts",
+    "lint": "eslint src/ tests/",
+    "typecheck": "tsc --noEmit",
+    "typecheck:frontend": "npm --prefix frontend run typecheck"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "bullmq": "^5.12.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.4.1",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/node": "^20.14.0",
+    "@types/pg": "^8.11.6",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^8.57.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
+    "vitest": "^1.6.0",
+    "wait-on": "^9.0.4"
+  }
+}

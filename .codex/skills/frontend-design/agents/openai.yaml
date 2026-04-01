@@ -1,0 +1,4 @@
+﻿interface:
+  display_name: "Frontend Design"
+  short_description: "LeadFlow uchun premium, product-grade frontend UX/UI skill"
+  default_prompt: "Use this skill to produce non-generic, operator-first frontend design and implementation for LeadFlow. Enforce explicit screen contracts, state contracts, observability-first UI, robust error recovery, and production validation gates."

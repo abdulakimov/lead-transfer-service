@@ -1,0 +1,212 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --bg: #e9edf2;
+  --shell: #f7f8fb;
+  --surface: #ffffff;
+  --surface-soft: #f3f5fa;
+  --text-primary: #171c2d;
+  --text-secondary: #6f778f;
+  --border: #e3e7f0;
+  --divider: #d7ddeb;
+  --brand: #5347ce;
+  --brand-soft: #887cfd;
+  --brand-blue: #4896fe;
+  --brand-teal: #16c8c7;
+  --success: #157c3f;
+  --success-soft: #e9f8ef;
+  --success-border: #bfe8cf;
+  --warning: #b86700;
+  --warning-soft: #fff8eb;
+  --warning-border: #f2d7a8;
+  --danger: #b4232f;
+  --danger-soft: #fff1f3;
+  --danger-border: #ffc9cf;
+  --info: #1970b6;
+  --info-soft: #ebf8ff;
+  --info-border: #cfe9f3;
+  --status-soft: #f5f7fb;
+  --status-border: #dde3ef;
+  --status-text: #647089;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d1320;
+  --shell: #111a2b;
+  --surface: #162235;
+  --surface-soft: #1b2940;
+  --text-primary: #e7edf9;
+  --text-secondary: #9aabc8;
+  --border: #2b3954;
+  --divider: #31435f;
+  --brand: #7b72ff;
+  --brand-soft: #9e98ff;
+  --brand-blue: #63a9ff;
+  --brand-teal: #2ed7d6;
+  --success: #63caa0;
+  --success-soft: #15251f;
+  --success-border: #2b5544;
+  --warning: #d9a45b;
+  --warning-soft: #2e2518;
+  --warning-border: #624f33;
+  --danger: #de7a86;
+  --danger-soft: #2f1f25;
+  --danger-border: #61404a;
+  --info: #8dbcf3;
+  --info-soft: #18273b;
+  --info-border: #355374;
+  --status-soft: #1c2a40;
+  --status-border: #334863;
+  --status-text: #9aabc8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-inter), "Segoe UI", sans-serif;
+  color: var(--text-primary);
+  background: var(--bg);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.panel {
+  @apply rounded-[18px] border bg-[var(--surface)];
+  border-color: var(--border);
+  box-shadow: 0 8px 24px rgba(23, 28, 45, 0.05);
+}
+
+.panel-soft {
+  @apply rounded-2xl border bg-[var(--surface-soft)];
+  border-color: var(--border);
+}
+
+.section-kicker {
+  @apply text-[12px] font-semibold;
+  color: var(--text-secondary);
+}
+
+.section-heading {
+  @apply text-[38px] font-semibold tracking-tight;
+  color: var(--text-primary);
+}
+
+.section-copy {
+  @apply text-sm;
+  color: var(--text-secondary);
+}
+
+.btn-primary {
+  @apply inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50;
+  background: var(--brand);
+}
+
+.btn-primary:hover {
+  background: #473cbb;
+}
+
+.btn-ghost {
+  @apply inline-flex items-center justify-center rounded-xl border bg-[var(--surface)] px-3 py-2 text-sm font-medium transition;
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.btn-ghost:hover {
+  background: var(--surface-soft);
+}
+
+.btn-soft {
+  @apply inline-flex items-center justify-center rounded-xl border px-3 py-2 text-sm font-medium transition;
+  border-color: #d8dff2;
+  color: #313a58;
+  background: #f4f7ff;
+}
+
+.btn-soft:hover {
+  background: #eef3ff;
+}
+
+.field {
+  @apply w-full rounded-xl border bg-[var(--surface)] px-3 py-2 text-sm outline-none transition;
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.field::placeholder {
+  color: #98a0b6;
+}
+
+.field:focus {
+  border-color: #a39af0;
+  box-shadow: 0 0 0 3px rgba(83, 71, 206, 0.12);
+}
+
+.label {
+  @apply mb-1.5 block text-xs font-semibold;
+  color: var(--text-secondary);
+}
+
+.table-shell {
+  @apply overflow-x-auto rounded-xl border bg-[var(--surface)];
+  border-color: var(--border);
+}
+
+.table-head {
+  @apply border-b text-left text-[12px] font-semibold;
+  border-color: var(--divider);
+  color: var(--text-secondary);
+}
+
+.table-row {
+  @apply border-b align-top last:border-none;
+  border-color: var(--divider);
+}
+
+.scrollbar-ui {
+  scrollbar-width: thin;
+  scrollbar-color: #9aa4bc #eef2f8;
+}
+
+.scrollbar-ui::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.scrollbar-ui::-webkit-scrollbar-track {
+  background: #eef2f8;
+  border-radius: 999px;
+}
+
+.scrollbar-ui::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #9aa4bc 0%, #7f8aa7 100%);
+  border-radius: 999px;
+  border: 2px solid #eef2f8;
+}
+
+.scrollbar-ui::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #7f8aa7 0%, #6f7b99 100%);
+}

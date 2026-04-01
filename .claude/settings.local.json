@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npx eslint:*)",
+      "Bash(npm run:*)",
+      "Bash(node:*)",
+      "Bash(docker compose:*)",
+      "Bash(curl -s -X POST http://localhost:3000/api/auth/register -H \"Content-Type: application/json\" -d '{\"\"\"\"email\"\"\"\":\"\"\"\"test@leadflow.uz\"\"\"\",\"\"\"\"password\"\"\"\":\"\"\"\"Test1234!\"\"\"\",\"\"\"\"name\"\"\"\":\"\"\"\"Test User\"\"\"\"}')",
+      "Bash(curl:*)",
+      "Bash(docker exec:*)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI4ZWExNmU0ZS1mNDY2LTRiMDQtOWRhNS0zZjdkZmM5NjgxZjIiLCJlbWFpbCI6InRlc3RAbGVhZGZsb3cudXoiLCJpYXQiOjE3NzQ2MDU1NDcsImV4cCI6MTc3NDYwNjQ0N30.rzh102Me3Gra370qQ62bDASbOEZmFOEvD1wntaJt7x8\")",
+      "Bash(__NEW_LINE_3f6d58a8ade3b626__ curl -s -X POST http://localhost:3000/api/integrations -H \"Content-Type: application/json\" -H \"Authorization: Bearer $TOKEN\" --data-raw '{:*)",
+      "Bash(__NEW_LINE_067391052ecd9159__ curl:*)",
+      "Bash(node -e \"console.log\\(require\\(''./package.json''\\).dependencies\\)\")",
+      "Bash(netstat -ano)",
+      "Bash(taskkill:*)",
+      "Bash(tee .token_raw)",
+      "Bash(wmic process:*)",
+      "Bash(cat src/db/migrations/*.sql)"
+    ]
+  }
+}
