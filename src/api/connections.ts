@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { getPool } from '../db/pool.js';
 import { encrypt, decrypt } from '../config/encryption.js';
 import { AppError } from '../middleware/error-handler.js';
+import { FB_GRAPH_API_BASE } from '../config/constants.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -17,6 +18,61 @@ const upsertSchema = z.object({
   credentials: credentialsSchema,
   meta: z.record(z.any()).optional(),
 });
+
+function hasValidFacebookConnectionCredentials(credentials: Record<string, unknown>): boolean {
+  const userToken = typeof credentials.user_access_token === 'string'
+    ? credentials.user_access_token.trim()
+    : '';
+  const shortToken = typeof credentials.short_lived_user_access_token === 'string'
+    ? credentials.short_lived_user_access_token.trim()
+    : '';
+  if (userToken || shortToken) return true;
+
+  const pages = Array.isArray(credentials.pages) ? credentials.pages : [];
+  return pages.some((page) => {
+    if (!page || typeof page !== 'object') return false;
+    const accessToken = (page as { access_token?: unknown }).access_token;
+    return typeof accessToken === 'string' && accessToken.trim().length > 0;
+  });
+}
+
+async function isValidFacebookUserToken(token: string): Promise<{ valid: boolean; error?: string }> {
+  const normalized = token.trim();
+  if (!normalized) return { valid: false };
+
+  const url = `${FB_GRAPH_API_BASE}/me?fields=id,name&access_token=${encodeURIComponent(normalized)}`;
+  const response = await fetch(url);
+  const payload = await response.json().catch(() => ({}));
+  if (response.ok && typeof (payload as { id?: string }).id === 'string') {
+    return { valid: true };
+  }
+
+  const message = typeof (payload as { error?: { message?: string } }).error?.message === 'string'
+    ? (payload as { error: { message: string } }).error.message
+    : `Facebook token tekshiruvi xatosi (${response.status})`;
+  return { valid: false, error: message };
+}
+
+async function ensureFacebookTokenAuthorized(credentials: Record<string, unknown>): Promise<void> {
+  const candidates = [
+    typeof credentials.user_access_token === 'string' ? credentials.user_access_token : '',
+    typeof credentials.short_lived_user_access_token === 'string' ? credentials.short_lived_user_access_token : '',
+  ]
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (candidates.length === 0) return;
+
+  const errors: string[] = [];
+  for (const candidate of candidates) {
+    const result = await isValidFacebookUserToken(candidate);
+    if (result.valid) return;
+    if (result.error) errors.push(result.error);
+  }
+
+  const suffix = errors.length > 0 ? `: ${errors[0]}` : '';
+  throw new AppError(400, `Facebook user token yaroqsiz yoki app uchun authorize qilinmagan${suffix}`);
+}
 
 function sanitizeSummary(row: Record<string, unknown>) {
   return {
@@ -111,6 +167,13 @@ router.post('/', async (req, res, next) => {
         userId: req.user!.userId,
         externalId: body.external_id,
       });
+      if (!hasValidFacebookConnectionCredentials(body.credentials)) {
+        throw new AppError(
+          400,
+          'Facebook ulanishini saqlash uchun user access token yoki kamida bitta page access token talab qilinadi',
+        );
+      }
+      await ensureFacebookTokenAuthorized(body.credentials);
     }
     const pool = getPool();
     const encrypted = encrypt(JSON.stringify(body.credentials));

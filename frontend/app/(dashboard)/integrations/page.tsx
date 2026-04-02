@@ -2,24 +2,23 @@
 
 import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DataPlaceholder } from "@/components/data-placeholder";
 import { LoadingSpinner } from "@/components/loading-spinner";
 import { PageLoading } from "@/components/page-loading";
 import { QueryBoundary } from "@/components/query-boundary";
-import { StatusPill } from "@/components/status-pill";
 import {
   createIntegration,
   createGoogleSpreadsheet,
   getBitrixLeadFields,
   getConnections,
   getFacebookFormFields,
+  getLeadsStatsSummary,
   getGoogleFormFields,
   getGoogleSpreadsheetMeta,
   getGoogleForms,
   getIntegrations,
   syncGoogleSpreadsheetColumns,
-  toggleIntegration,
   updateIntegration,
   type BitrixLeadField,
   type ConnectionSummary,
@@ -30,9 +29,11 @@ import {
 import type { Integration } from "@/lib/types";
 import { useApiQuery } from "@/lib/use-api-query";
 import { useAuthToken } from "@/lib/use-auth-token";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus, Power, Save, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Plus, Save, X } from "lucide-react";
 import bitrixIcon from "@/asstes/icons/bitrix.png";
 import amocrmIcon from "@/asstes/icons/amocrm.png";
+import formsIcon from "@/asstes/icons/forms.webp";
+import metaIcon from "@/asstes/icons/meta.webp";
 import sheetsIcon from "@/asstes/icons/sheets.png";
 
 type WizardStep = 1 | 2 | 3 | 4;
@@ -199,7 +200,34 @@ function emptyGoogleSheetMappingRow(): GoogleSheetMappingRow {
   };
 }
 
+function formatIntegrationDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const months = [
+    "yanvar",
+    "fevral",
+    "mart",
+    "aprel",
+    "may",
+    "iyun",
+    "iyul",
+    "avgust",
+    "sentabr",
+    "oktabr",
+    "noyabr",
+    "dekabr",
+  ];
+  const day = date.getDate();
+  const month = months[date.getMonth()] ?? "";
+  const year = date.getFullYear();
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${day}-${month}, ${year} ${hour}:${minute}`;
+}
+
 function IntegrationsContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { token, ready } = useAuthToken();
   const query = useApiQuery<Integration[]>(
     ["integrations-v4", token],
@@ -211,13 +239,16 @@ function IntegrationsContent() {
     () => getConnections(token!),
     { enabled: ready && Boolean(token), throwOnError: true, staleMs: 15_000 },
   );
+  const statsSummaryQuery = useApiQuery<Array<{ integration_id: string; total: number }>>(
+    ["leads-stats-summary-v1", token],
+    () => getLeadsStatsSummary(token!),
+    { enabled: ready && Boolean(token), throwOnError: false, staleMs: 20_000 },
+  );
 
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<WizardStep>(1);
   const [wizard, setWizard] = useState<WizardState>(INITIAL_WIZARD);
   const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [pendingToggle, setPendingToggle] = useState<{ id: string; active: boolean } | null>(null);
   const [fieldsLoading, setFieldsLoading] = useState(false);
   const [creatingSheet, setCreatingSheet] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -233,14 +264,15 @@ function IntegrationsContent() {
   const [googleSheetMappings, setGoogleSheetMappings] = useState<GoogleSheetMappingRow[]>([]);
   const [googleSourceForms, setGoogleSourceForms] = useState<GoogleFormOption[]>([]);
   const [googleSourceFormsLoading, setGoogleSourceFormsLoading] = useState(false);
-  const [editingIntegration, setEditingIntegration] = useState<Integration | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editDedupEnabled, setEditDedupEnabled] = useState(true);
-  const [editDedupField, setEditDedupField] = useState<"phone" | "email">("phone");
-  const [editNotifyChatId, setEditNotifyChatId] = useState("");
-  const [editSaving, setEditSaving] = useState(false);
+  const [integrationTab, setIntegrationTab] = useState<"active" | "inactive">("active");
 
   const rows = query.data ?? [];
+  const editingIntegrationId = searchParams.get("edit");
+  const editingIntegration = useMemo(
+    () => rows.find((row) => row.id === editingIntegrationId) ?? null,
+    [editingIntegrationId, rows],
+  );
+  const isEditing = Boolean(editingIntegration);
   const connections = connectionsQuery.data ?? [];
   const facebookConnections = connections.filter((c) => c.provider === "facebook");
   const googleConnections = connections.filter((c) => c.provider === "google");
@@ -391,8 +423,7 @@ function IntegrationsContent() {
     wizard.sourceFormId,
   ]);
 
-  function resetWizard() {
-    setOpen(false);
+  function resetWizardState() {
     setStep(1);
     setWizard(INITIAL_WIZARD);
     setBitrixFields([]);
@@ -407,6 +438,97 @@ function IntegrationsContent() {
     setSaving(false);
     setFieldsLoading(false);
   }
+
+  function closeWizard() {
+    setOpen(false);
+    resetWizardState();
+    if (editingIntegrationId) {
+      router.replace("/integrations");
+    }
+  }
+
+  function openCreateDialog() {
+    if (editingIntegrationId) {
+      router.replace("/integrations");
+    }
+    resetWizardState();
+    setOpen(true);
+  }
+
+  function openEditDialog(row: Integration) {
+    resetWizardState();
+    setOpen(true);
+    router.replace(`/integrations?edit=${encodeURIComponent(row.id)}`);
+  }
+
+  useEffect(() => {
+    if (!editingIntegration) return;
+
+    const mappedEntries = Object.entries(editingIntegration.field_mapping ?? {});
+    const sourceType = editingIntegration.source_type === "google_forms" ? "google_forms" : "facebook";
+    const destType = editingIntegration.dest_type === "google_sheets"
+      ? "google_sheets"
+      : editingIntegration.dest_type === "amocrm"
+        ? "amocrm"
+        : "bitrix24";
+
+    setOpen(true);
+    setStep(1);
+    setError(null);
+    setBitrixFields([]);
+    setSourceFields([]);
+    setSourceFieldsError(null);
+    setGoogleSpreadsheetTabs([]);
+    setGoogleSheetHeaders([]);
+    setWizard({
+      sourceType,
+      sourceConnectionId: editingIntegration.source_connection_id ?? "",
+      sourcePageId: editingIntegration.source_page_id ?? "",
+      sourceFormId: editingIntegration.source_form_id ?? "",
+      integrationName: editingIntegration.name ?? "",
+      notifyTelegramChatId: editingIntegration.notify_telegram_chat_id ?? "",
+      destType,
+      destConnectionId: editingIntegration.dest_connection_id ?? "",
+      googleSpreadsheetMode: editingIntegration.dest_type === "google_sheets" ? "existing" : "create",
+      googleCreateSpreadsheetName: "",
+      googleCreateSheetName: editingIntegration.dest_sheet_name ?? "Leads",
+      googleHeaderMode: "default",
+      googleCreatedSpreadsheetUrl: "",
+      destResourceId: editingIntegration.dest_resource_id ?? "",
+      destSheetName: editingIntegration.dest_sheet_name ?? "Sheet1",
+      destCredentials: editingIntegration.dest_credentials_preview ?? "",
+      dedupEnabled: editingIntegration.dedup_enabled,
+      dedupField: editingIntegration.dedup_field ?? "phone",
+    });
+
+    if (editingIntegration.dest_type === "google_sheets") {
+      setGoogleSheetMappings(
+        mappedEntries.length > 0
+          ? mappedEntries.map(([sourceField, columnTitle]) => ({
+            id: emptyGoogleSheetMappingRow().id,
+            sourceField,
+            selectedHeader: columnTitle,
+            customHeader: "",
+          }))
+          : [],
+      );
+      setGoogleColumnRows([]);
+      setMappingRows([]);
+      return;
+    }
+
+    setMappingRows(
+      mappedEntries.length > 0
+        ? mappedEntries.map(([sourceField, destinationField]) => ({
+          id: emptyMappingRow().id,
+          sourceField,
+          destinationField,
+        }))
+        : [],
+    );
+    setGoogleSheetMappings([]);
+    setGoogleColumnRows([]);
+  }, [editingIntegration]);
 
   useEffect(() => {
     if (!token || !open) return;
@@ -696,77 +818,17 @@ function IntegrationsContent() {
         dedup_field: wizard.dedupField,
       };
 
-      await createIntegration(payload, token);
+      if (editingIntegration) {
+        await updateIntegration(editingIntegration.id, payload, token);
+      } else {
+        await createIntegration(payload, token);
+      }
       await query.refetch();
-      resetWizard();
+      closeWizard();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Integration create xatosi");
+      setError(err instanceof Error ? err.message : `Integration ${editingIntegration ? "update" : "create"} xatosi`);
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function onToggleIntegration(integrationId: string, active: boolean) {
-    if (!token) return;
-    setPendingToggle({ id: integrationId, active });
-  }
-
-  async function confirmToggleIntegration() {
-    if (!token || !pendingToggle) return;
-    const integrationId = pendingToggle.id;
-    setDeletingId(integrationId);
-    setError(null);
-    try {
-      await toggleIntegration(integrationId, token);
-      await query.refetch();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Integratsiya holatini o'zgartirishda xato");
-    } finally {
-      setDeletingId(null);
-      setPendingToggle(null);
-    }
-  }
-
-  function openEditDialog(row: Integration) {
-    setEditingIntegration(row);
-    setEditName(row.name);
-    setEditDedupEnabled(row.dedup_enabled);
-    setEditDedupField(row.dedup_field);
-    setEditNotifyChatId(row.notify_telegram_chat_id ?? "");
-    setError(null);
-  }
-
-  function closeEditDialog() {
-    setEditingIntegration(null);
-    setEditSaving(false);
-  }
-
-  async function saveEditIntegration() {
-    if (!token || !editingIntegration) return;
-    if (!editName.trim()) {
-      setError("Integratsiya nomi bo'sh bo'lmasligi kerak.");
-      return;
-    }
-
-    setEditSaving(true);
-    setError(null);
-    try {
-      await updateIntegration(
-        editingIntegration.id,
-        {
-          name: editName.trim(),
-          dedup_enabled: editDedupEnabled,
-          dedup_field: editDedupField,
-          notify_telegram_chat_id: editNotifyChatId.trim() || null,
-        },
-        token,
-      );
-      await query.refetch();
-      closeEditDialog();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Integratsiyani yangilashda xato");
-    } finally {
-      setEditSaving(false);
     }
   }
 
@@ -792,6 +854,14 @@ function IntegrationsContent() {
       setFieldsLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!open || !editingIntegrationId || !token) return;
+    if (wizard.destType !== "bitrix24") return;
+    if (!wizard.destCredentials.trim()) return;
+    if (fieldsLoading || bitrixFields.length > 0) return;
+    void onLoadBitrixFields();
+  }, [bitrixFields.length, editingIntegrationId, fieldsLoading, open, token, wizard.destCredentials, wizard.destType]);
 
   async function onCreateGoogleSheetInPlace() {
     if (!token) return;
@@ -924,70 +994,91 @@ function IntegrationsContent() {
 
   const activeRows = rows.filter((row) => row.active);
   const inactiveRows = rows.filter((row) => !row.active);
+  const visibleRows = integrationTab === "active" ? activeRows : inactiveRows;
+  const transactionsByIntegrationId = new Map(
+    (statsSummaryQuery.data ?? []).map((item) => [item.integration_id, Number(item.total) || 0]),
+  );
 
-  function renderIntegrationsTable(tableRows: Integration[]) {
+  function renderIntegrationsCards(cardRows: Integration[]) {
+    const sourceVisualByType = {
+      facebook: { label: "Meta", icon: metaIcon, tone: "bg-[var(--info-soft)]" },
+      google_forms: { label: "Google Forms", icon: formsIcon, tone: "bg-[var(--brand-soft)]" },
+    } as const;
+
+    const destinationVisualByType = {
+      bitrix24: { label: "Bitrix24", icon: bitrixIcon, tone: "bg-[var(--info-soft)]" },
+      amocrm: { label: "AmoCRM", icon: amocrmIcon, tone: "bg-[var(--surface-soft)]" },
+      google_sheets: { label: "Google Sheets", icon: sheetsIcon, tone: "bg-[var(--success-soft)]" },
+    } as const;
+
     return (
-      <div className="table-shell">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="table-head">
-              <th className="px-3 py-3">Nomi</th>
-              <th className="px-3 py-3">Holat</th>
-              <th className="px-3 py-3">Manba</th>
-              <th className="px-3 py-3">Maqsad</th>
-              <th className="px-3 py-3">Sahifa / Forma</th>
-              <th className="px-3 py-3">Yaratilgan</th>
-              <th className="px-3 py-3 text-right">Amallar</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tableRows.map((row) => (
-              <tr key={row.id} className="table-row">
-                <td className="px-3 py-3">
-                  <p className="font-semibold text-[var(--text-primary)]">{row.name}</p>
-                  <p className="mt-1 font-mono text-[11px] text-[var(--text-secondary)]">{row.id}</p>
-                </td>
-                <td className="px-3 py-3"><StatusPill status={row.active ? "active" : "disabled"} /></td>
-                <td className="px-3 py-3">{row.source_type}</td>
-                <td className="px-3 py-3">{row.dest_type}</td>
-                <td className="px-3 py-3">
-                  <p>{row.source_page_id ?? "-"}</p>
-                  <p className="text-xs text-[var(--text-secondary)]">form: {row.source_form_id ?? "any"}</p>
-                </td>
-                <td className="px-3 py-3 text-xs text-[var(--text-secondary)]">
-                  {new Date(row.created_at).toLocaleString()}
-                </td>
-                <td className="px-3 py-3 text-right">
-                  <div className="inline-flex items-center gap-2 rounded-2xl border border-[#d4dbe7] bg-[#edf1f7] p-1.5 dark:border-[var(--border)] dark:bg-[var(--surface-soft)]">
-                    <button
-                      className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-[#d1d9e6] bg-white px-3 text-xs font-semibold text-[#0f172a] shadow-sm transition hover:-translate-y-[1px] hover:bg-[#f8fafc] hover:shadow dark:border-[var(--border)] dark:bg-[var(--surface)] dark:text-[var(--text-primary)] dark:hover:bg-[var(--surface-soft)]"
-                      onClick={() => openEditDialog(row)}
-                      type="button"
-                      title="Integratsiyani tahrirlash"
-                    >
-                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                      Tahrirlash
-                    </button>
-                    <button
-                      className={`inline-flex h-9 items-center gap-1.5 rounded-[10px] px-3 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-[1px] hover:shadow ${
-                        row.active
-                          ? "border border-[#c12a3e] bg-[#d33349] hover:bg-[#bf2a3e]"
-                          : "border border-[#1a8d51] bg-[#1fa35d] hover:bg-[#188c4f]"
-                      }`}
-                      disabled={deletingId === row.id}
-                      onClick={() => void onToggleIntegration(row.id, row.active)}
-                      type="button"
-                      title={row.active ? "Integratsiyani tugatish" : "Integratsiyani faollashtirish"}
-                    >
-                      <Power className="h-3.5 w-3.5" aria-hidden="true" />
-                      {row.active ? "Tugatish" : "Faollashtirish"}
-                    </button>
+      <div className="grid grid-cols-1 justify-items-start gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {cardRows.map((row) => {
+          const sourceVisual = sourceVisualByType[row.source_type as keyof typeof sourceVisualByType] ?? {
+            label: row.source_type,
+            icon: formsIcon,
+            tone: "bg-[var(--surface-soft)]",
+          };
+          const destinationVisual = destinationVisualByType[row.dest_type as keyof typeof destinationVisualByType] ?? {
+            label: row.dest_type,
+            icon: sheetsIcon,
+            tone: "bg-[var(--surface-soft)]",
+          };
+
+          const transactionCount = transactionsByIntegrationId.get(row.id) ?? 0;
+
+          return (
+            <button
+              key={row.id}
+              className="flex w-[320px] max-w-full flex-col gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 text-left shadow-sm transition-shadow hover:shadow-md"
+              onClick={() => openEditDialog(row)}
+              type="button"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-[18px] font-semibold leading-6 text-[var(--text-primary)]">{row.name}</p>
+                </div>
+                <span
+                  aria-label={row.active ? "Faol" : "O'chirilgan"}
+                  className={`mt-1 inline-flex h-2.5 w-2.5 rounded-full ${row.active ? "bg-[var(--success)]" : "bg-[var(--text-secondary)]"}`}
+                />
+              </div>
+
+              <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--surface-soft)] px-3 py-2.5">
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${sourceVisual.tone}`}>
+                      <Image alt={`${sourceVisual.label} logo`} className="h-5 w-5 object-contain" src={sourceVisual.icon} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-[var(--text-primary)]">{sourceVisual.label}</p>
+                    </div>
                   </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  <span className="text-xs font-semibold text-[var(--text-secondary)]">{"->"}</span>
+                  <div className="flex min-w-0 items-center justify-end gap-2">
+                    <div className="min-w-0 text-right">
+                      <p className="truncate text-sm font-medium text-[var(--text-primary)]">{destinationVisual.label}</p>
+                    </div>
+                    <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${destinationVisual.tone}`}>
+                      <Image alt={`${destinationVisual.label} logo`} className="h-5 w-5 object-contain" src={destinationVisual.icon} />
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-2.5 grid grid-cols-2 gap-2 text-[11px] text-[var(--text-secondary)]">
+                <div className="min-w-0">
+                  <p className="text-[11px]">Tranzaksiyalar</p>
+                  <p className="truncate text-xs font-medium text-[var(--text-primary)]">{transactionCount} ta</p>
+                </div>
+                <div className="min-w-0 text-right">
+                  <p className="text-[11px]">Yaratilgan</p>
+                  <p className="truncate text-xs font-medium text-[var(--text-primary)]">{formatIntegrationDate(row.created_at)}</p>
+                </div>
+              </div>
+            </button>
+          );
+        })}
       </div>
     );
   }
@@ -996,7 +1087,7 @@ function IntegrationsContent() {
     <>
       <section className="panel-soft p-5">
         <div className="mb-4 flex justify-end">
-          <button className="btn-primary" onClick={() => setOpen(true)} type="button">
+          <button className="btn-primary" onClick={openCreateDialog} type="button">
             <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
             Yangi integratsiya
           </button>
@@ -1009,30 +1100,45 @@ function IntegrationsContent() {
           />
         ) : (
           <div className="space-y-5">
-            <div>
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-[var(--text-primary)]">Faol integratsiyalar</p>
-                <p className="text-xs text-[var(--text-secondary)]">{activeRows.length} ta</p>
-              </div>
-              {activeRows.length > 0 ? (
-                renderIntegrationsTable(activeRows)
-              ) : (
-                <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-secondary)]">
-                  Hozircha faol integratsiya yo'q.
-                </div>
-              )}
+            <div className="inline-flex rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1">
+              <button
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+                  integrationTab === "active"
+                    ? "bg-[var(--surface-soft)] text-[var(--text-primary)]"
+                    : "text-[var(--text-secondary)]"
+                }`}
+                onClick={() => setIntegrationTab("active")}
+                type="button"
+              >
+                Faol integratsiyalar ({activeRows.length})
+              </button>
+              <button
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+                  integrationTab === "inactive"
+                    ? "bg-[var(--surface-soft)] text-[var(--text-primary)]"
+                    : "text-[var(--text-secondary)]"
+                }`}
+                onClick={() => setIntegrationTab("inactive")}
+                type="button"
+              >
+                Tugatilgan integratsiyalar ({inactiveRows.length})
+              </button>
             </div>
 
             <div>
               <div className="mb-2 flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-[var(--text-primary)]">Tugatilgan integratsiyalar</p>
-                <p className="text-xs text-[var(--text-secondary)]">{inactiveRows.length} ta</p>
+                <p className="text-xl font-semibold text-[var(--text-primary)]">
+                  {integrationTab === "active" ? "Faol integratsiyalar" : "Tugatilgan integratsiyalar"}
+                </p>
+                <p className="text-xs text-[var(--text-secondary)]">{visibleRows.length} ta</p>
               </div>
-              {inactiveRows.length > 0 ? (
-                renderIntegrationsTable(inactiveRows)
+              {visibleRows.length > 0 ? (
+                renderIntegrationsCards(visibleRows)
               ) : (
                 <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-secondary)]">
-                  Tugatilgan integratsiyalar topilmadi.
+                  {integrationTab === "active"
+                    ? "Hozircha faol integratsiya yo'q."
+                    : "Tugatilgan integratsiyalar topilmadi."}
                 </div>
               )}
             </div>
@@ -1044,8 +1150,8 @@ function IntegrationsContent() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-2">
           <form className="flex min-h-[85vh] max-h-[calc(100vh-16px)] w-full max-w-4xl flex-col rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl" onSubmit={onSave}>
             <div className="flex items-center justify-between border-b border-[var(--border)] px-6 py-4">
-              <h2 className="text-2xl font-semibold">Integratsiya qo'shish</h2>
-              <button className="btn-ghost" onClick={resetWizard} type="button">
+              <h2 className="text-2xl font-semibold">{isEditing ? "Integratsiyani tahrirlash" : "Integratsiya qo'shish"}</h2>
+              <button className="btn-ghost" onClick={closeWizard} type="button">
                 <X className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
@@ -1750,118 +1856,6 @@ function IntegrationsContent() {
               </div>
             </div>
           </form>
-        </div>
-      ) : null}
-      <ConfirmDialog
-        cancelText="Bekor qilish"
-        confirmText={pendingToggle?.active ? "Tugatish" : "Faollashtirish"}
-        loading={Boolean(deletingId && pendingToggle?.id === deletingId)}
-        message={
-          pendingToggle?.active
-            ? "Integratsiyani tugatishni tasdiqlaysizmi?"
-            : "Integratsiyani qayta faollashtirishni tasdiqlaysizmi?"
-        }
-        onCancel={() => setPendingToggle(null)}
-        onConfirm={() => void confirmToggleIntegration()}
-        open={Boolean(pendingToggle)}
-        title="Integratsiya holati"
-      />
-      {editingIntegration ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-2xl rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
-            <div className="flex items-start justify-between border-b border-[var(--border)] px-5 py-4">
-              <div>
-                <p className="text-lg font-semibold text-[var(--text-primary)]">Integratsiyani tahrirlash</p>
-                <p className="mt-1 text-xs text-[var(--text-secondary)]">ID: {editingIntegration.id}</p>
-              </div>
-              <button className="btn-ghost h-9 w-9 px-0" onClick={closeEditDialog} type="button" aria-label="Yopish">
-                <X className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </div>
-
-            <div className="space-y-4 px-5 py-4">
-              <section className="rounded-xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
-                <p className="mb-3 text-sm font-semibold text-[var(--text-primary)]">Asosiy</p>
-                <label className="block text-xs text-[var(--text-secondary)]">
-                  Nomi
-                  <input
-                    className="field mt-1 h-10"
-                    value={editName}
-                    onChange={(event) => setEditName(event.target.value)}
-                  />
-                </label>
-              </section>
-
-              <section className="rounded-xl border border-[var(--border)] bg-[var(--surface-soft)] p-4">
-                <p className="mb-3 text-sm font-semibold text-[var(--text-primary)]">Dedup va bildirishnoma</p>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <p className="mb-1 text-xs text-[var(--text-secondary)]">Dedup holati</p>
-                    <div className="inline-flex h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1">
-                      <button
-                        className={`flex-1 rounded-lg text-xs font-medium transition ${
-                          editDedupEnabled ? "bg-[var(--brand)] text-white" : "text-[var(--text-secondary)]"
-                        }`}
-                        onClick={() => setEditDedupEnabled(true)}
-                        type="button"
-                      >
-                        Yoqilgan
-                      </button>
-                      <button
-                        className={`flex-1 rounded-lg text-xs font-medium transition ${
-                          !editDedupEnabled ? "bg-[var(--text-primary)] text-[var(--surface)]" : "text-[var(--text-secondary)]"
-                        }`}
-                        onClick={() => setEditDedupEnabled(false)}
-                        type="button"
-                      >
-                        O'chirilgan
-                      </button>
-                    </div>
-                  </div>
-                  <UiDropdown
-                    label="Dedup maydoni"
-                    value={editDedupField}
-                    placeholder="Maydon tanlang"
-                    options={[
-                      { value: "phone", label: "Telefon" },
-                      { value: "email", label: "Email" },
-                    ]}
-                    onChange={(next) => setEditDedupField(next as "phone" | "email")}
-                    disabled={!editDedupEnabled}
-                  />
-                </div>
-
-                <label className="mt-3 block text-xs text-[var(--text-secondary)]">
-                  Telegram chat ID (ixtiyoriy)
-                  <input
-                    className="field mt-1 h-10"
-                    placeholder="-100..."
-                    value={editNotifyChatId}
-                    onChange={(event) => setEditNotifyChatId(event.target.value)}
-                  />
-                </label>
-                <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                  Bu maydon to'ldirilsa, lead yetkazilganda Telegram bot shu chatga xabar yuboradi.
-                  Bo'sh qoldirilsa, Telegram bildirishnoma yuborilmaydi.
-                </p>
-              </section>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-4">
-              <button className="btn-ghost" disabled={editSaving} onClick={closeEditDialog} type="button">
-                <X className="mr-1.5 h-4 w-4" aria-hidden="true" />
-                Bekor qilish
-              </button>
-              <button className="btn-primary" disabled={editSaving} onClick={() => void saveEditIntegration()} type="button">
-                {editSaving ? "Saqlanmoqda..." : (
-                  <>
-                    <Save className="mr-1.5 h-4 w-4" aria-hidden="true" />
-                    Saqlash
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
         </div>
       ) : null}
     </>

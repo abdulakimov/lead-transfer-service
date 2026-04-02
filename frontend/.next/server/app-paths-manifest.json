@@ -1,1 +1,8 @@
-{}
+{
+  "/(auth)/login/page": "app/(auth)/login/page.js",
+  "/page": "app/page.js",
+  "/(dashboard)/connections/page": "app/(dashboard)/connections/page.js",
+  "/(dashboard)/integrations/page": "app/(dashboard)/integrations/page.js",
+  "/(dashboard)/leads/page": "app/(dashboard)/leads/page.js",
+  "/(dashboard)/dashboard/page": "app/(dashboard)/dashboard/page.js"
+}

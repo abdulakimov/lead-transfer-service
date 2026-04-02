@@ -21,7 +21,7 @@ const envSchema = z.object({
   FB_APP_ID: z.string().min(1),
   FB_APP_SECRET: z.string().min(1),
   FB_VERIFY_TOKEN: z.string().min(1),
-  FB_OAUTH_SCOPES: z.string().default('public_profile,pages_show_list,pages_read_engagement,pages_manage_metadata'),
+  FB_OAUTH_SCOPES: z.string().default('public_profile,pages_show_list,pages_read_engagement,pages_manage_metadata,business_management,pages_manage_ads'),
   FB_OAUTH_CONFIG_ID: z.string().optional().default(''),
   FB_OAUTH_REDIRECT_URI: z.string().url().default('http://localhost:3000/api/integrations/facebook/oauth/callback'),
   GOOGLE_OAUTH_CLIENT_ID: z.string().min(1),

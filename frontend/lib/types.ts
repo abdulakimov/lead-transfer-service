@@ -7,9 +7,14 @@ export interface Integration {
   name: string;
   active: boolean;
   source_type: string;
+  source_connection_id?: string | null;
   source_page_id: string | null;
   source_form_id: string | null;
   dest_type: string;
+  dest_connection_id?: string | null;
+  dest_resource_id?: string | null;
+  dest_sheet_name?: string | null;
+  dest_credentials_preview?: string | null;
   dest_credentials_set?: boolean;
   field_mapping?: Record<string, string>;
   notify_telegram_chat_id?: string | null;

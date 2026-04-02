@@ -260,6 +260,8 @@ export type FacebookOAuthResultResponse =
       pages: FacebookConnectedPage[];
       pixels: FacebookConnectedPixel[];
       user_access_token: string;
+      short_lived_user_access_token?: string;
+      granted_permissions?: string[];
       form_fetch_errors?: FacebookFormFetchError[];
     };
   }
@@ -455,6 +457,10 @@ export function createIntegration(input: CreateIntegrationInput, token: string):
   );
 }
 
+export function getIntegrationById(integrationId: string, token: string): Promise<Integration> {
+  return request<Integration>(`/api/integrations/${encodeURIComponent(integrationId)}`, {}, token);
+}
+
 export function updateIntegration(
   integrationId: string,
   input: Partial<CreateIntegrationInput> & {
@@ -623,6 +629,28 @@ export function getBitrixLeadFields(webhookUrl: string, token: string): Promise<
   );
 }
 
+export function getBitrixLeadFieldsByIntegration(
+  integrationId: string,
+  token: string,
+): Promise<{ fields: BitrixLeadField[]; total: number }> {
+  return request<{ fields: BitrixLeadField[]; total: number }>(
+    `/api/integrations/${encodeURIComponent(integrationId)}/bitrix/fields`,
+    {},
+    token,
+  );
+}
+
+export function getBitrixLeadFieldsByIntegrationQuery(
+  integrationId: string,
+  token: string,
+): Promise<{ fields: BitrixLeadField[]; total: number }> {
+  return request<{ fields: BitrixLeadField[]; total: number }>(
+    `/api/integrations/bitrix/fields/by-integration?integration_id=${encodeURIComponent(integrationId)}`,
+    {},
+    token,
+  );
+}
+
 export function getLeads(
   token: string,
   params?: { limit?: number; offset?: number; status?: string; integration_id?: string },
@@ -645,6 +673,20 @@ export function retryLead(leadId: string, token: string): Promise<{ message: str
     { method: "POST" },
     token,
   );
+}
+
+export interface LeadsStatsSummaryRow {
+  integration_id: string;
+  integration_name: string;
+  delivered: number;
+  failed: number;
+  dlq: number;
+  duplicate: number;
+  total: number;
+}
+
+export function getLeadsStatsSummary(token: string): Promise<LeadsStatsSummaryRow[]> {
+  return request<LeadsStatsSummaryRow[]>("/api/leads/stats/summary", {}, token);
 }
 
 export function getWorkflows(token: string): Promise<Workflow[]> {

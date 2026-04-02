@@ -4,13 +4,17 @@ import { useEffect, useState } from "react";
 import { getAccessToken } from "@/lib/session";
 
 export function useAuthToken() {
-  const [ready, setReady] = useState(false);
-  const [token, setToken] = useState<string | null>(null);
+  const [state, setState] = useState<{ ready: boolean; token: string | null }>({
+    ready: false,
+    token: null,
+  });
 
   useEffect(() => {
-    setToken(getAccessToken());
-    setReady(true);
+    setState({
+      ready: true,
+      token: getAccessToken(),
+    });
   }, []);
 
-  return { token, ready };
+  return state;
 }

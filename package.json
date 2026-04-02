@@ -12,7 +12,7 @@
     "dev:backend:watch": "npm run dev",
     "dev:frontend": "npm --prefix frontend run dev",
     "dev:tunnel": "powershell -ExecutionPolicy Bypass -File .\\scripts\\reverse-tunnel.ps1",
-    "dev:public": "concurrently -k -n backend,frontend,tunnel \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:tunnel\"",
+    "dev:public": "concurrently -k -n backend,frontend,tunnel \"npm run dev:backend:watch\" \"npm run dev:frontend\" \"npm run dev:tunnel\"",
     "build": "tsc",
     "build:frontend": "npm --prefix frontend run build",
     "start": "node dist/index.js",

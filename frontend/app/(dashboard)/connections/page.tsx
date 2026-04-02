@@ -87,9 +87,7 @@ function ConnectionsContent() {
         const result = await getFacebookOAuthResult(init.state, token);
         if (result.status === "done") {
           if (!result.success) throw new Error(result.error || "Facebook OAuth xatosi");
-          if (!result.payload.pages || result.payload.pages.length === 0) {
-            throw new Error("Facebook sahifalari topilmadi. Facebook oynasida sahifalarga ruxsatni to'liq bering va qayta ulang.");
-          }
+          const oauthPages = Array.isArray(result.payload.pages) ? result.payload.pages : [];
           const saved = await upsertConnection(
             {
               provider: "facebook",
@@ -97,13 +95,14 @@ function ConnectionsContent() {
               name: result.payload.profile.name,
               credentials: {
                 profile: result.payload.profile,
-                pages: result.payload.pages,
+                pages: oauthPages,
                 pixels: result.payload.pixels,
                 user_access_token: result.payload.user_access_token,
+                short_lived_user_access_token: result.payload.short_lived_user_access_token,
               },
               meta: {
                 profile: result.payload.profile,
-                pages: result.payload.pages.map((p) => ({
+                pages: oauthPages.map((p) => ({
                   id: p.id,
                   name: p.name,
                   forms: p.forms,
@@ -114,6 +113,9 @@ function ConnectionsContent() {
             token,
           );
           const refreshed = await refreshFacebookConnectionForms(saved.id, token);
+          if (!refreshed.pages || refreshed.pages.length === 0) {
+            throw new Error("Facebook sahifalari topilmadi. Facebook Business Integrations'dan ulanishni o'chirib, barcha Page ruxsatlari bilan qayta ulang.");
+          }
           const hasAnyForm = refreshed.pages.some((page) => (page.forms?.length ?? 0) > 0);
           if (!hasAnyForm && refreshed.errors.length > 0) {
             setError("Ba'zi sahifalarda formalarni olish cheklangan. Permission va Page access ni tekshiring.");

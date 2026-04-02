@@ -29,6 +29,11 @@ interface FacebookPage {
   access_token: string;
 }
 
+interface FacebookBusiness {
+  id: string;
+  name?: string;
+}
+
 interface FacebookLeadForm {
   id: string;
   name: string;
@@ -96,6 +101,8 @@ type FacebookOAuthResult =
       pages: Array<FacebookPage & { forms: FacebookLeadForm[] }>;
       pixels: FacebookPixel[];
       user_access_token: string;
+      short_lived_user_access_token?: string;
+      granted_permissions?: string[];
       form_fetch_errors?: FacebookFormsFetchError[];
     };
   }
@@ -575,6 +582,115 @@ async function fetchFacebookPagesByUserToken(userAccessToken: string): Promise<F
   return pagesPayload.data ?? [];
 }
 
+async function fetchFacebookBusinessesByUserToken(userAccessToken: string): Promise<FacebookBusiness[]> {
+  const url = `${FB_GRAPH_API_BASE}/me/businesses?fields=id,name&access_token=${encodeURIComponent(userAccessToken)}`;
+  const payload = await fetchFacebookJson<{ data?: FacebookBusiness[] }>(url).catch(() => ({ data: [] }));
+  return payload.data ?? [];
+}
+
+async function fetchBusinessPageIds(
+  businessId: string,
+  userAccessToken: string,
+): Promise<Array<{ id: string; name?: string }>> {
+  const edges = ['owned_pages', 'client_pages'];
+  const byId = new Map<string, { id: string; name?: string }>();
+
+  for (const edge of edges) {
+    const url = `${FB_GRAPH_API_BASE}/${businessId}/${edge}?fields=id,name&limit=200&access_token=${encodeURIComponent(userAccessToken)}`;
+    const payload = await fetchFacebookJson<{ data?: Array<{ id?: string; name?: string }> }>(url).catch(() => ({ data: [] }));
+    for (const page of payload.data ?? []) {
+      if (!page.id) continue;
+      byId.set(page.id, { id: page.id, name: page.name });
+    }
+  }
+
+  return Array.from(byId.values());
+}
+
+async function hydratePageWithAccessToken(
+  pageId: string,
+  fallbackName: string | undefined,
+  userAccessToken: string,
+): Promise<FacebookPage | null> {
+  const url = `${FB_GRAPH_API_BASE}/${pageId}?fields=id,name,access_token&access_token=${encodeURIComponent(userAccessToken)}`;
+  const payload: { id?: string; name?: string; access_token?: string } =
+    await fetchFacebookJson<{ id?: string; name?: string; access_token?: string }>(url).catch(() => ({}));
+  if (!payload.id || !payload.access_token) return null;
+  return {
+    id: payload.id,
+    name: payload.name ?? fallbackName ?? payload.id,
+    access_token: payload.access_token,
+  };
+}
+
+async function fetchFacebookPagesViaBusinesses(userAccessToken: string): Promise<FacebookPage[]> {
+  const businesses = await fetchFacebookBusinessesByUserToken(userAccessToken);
+  if (businesses.length === 0) return [];
+
+  const byId = new Map<string, FacebookPage>();
+  for (const business of businesses) {
+    const rawPages = await fetchBusinessPageIds(business.id, userAccessToken);
+    for (const page of rawPages) {
+      if (byId.has(page.id)) continue;
+      const hydrated = await hydratePageWithAccessToken(page.id, page.name, userAccessToken);
+      if (!hydrated) continue;
+      byId.set(hydrated.id, hydrated);
+    }
+  }
+
+  return Array.from(byId.values());
+}
+
+async function fetchGrantedPermissions(userAccessToken: string): Promise<string[]> {
+  const url = `${FB_GRAPH_API_BASE}/me/permissions?access_token=${encodeURIComponent(userAccessToken)}`;
+  const payload = await fetchFacebookJson<{
+    data?: Array<{ permission?: string; status?: string }>;
+  }>(url).catch(() => ({ data: [] }));
+
+  return (payload.data ?? [])
+    .filter((item) => item.status === 'granted' && typeof item.permission === 'string')
+    .map((item) => item.permission as string);
+}
+
+async function fetchPagesWithTokenCandidates(tokens: string[]): Promise<FacebookPage[]> {
+  for (const token of tokens) {
+    const normalized = token.trim();
+    if (!normalized) continue;
+    const pages = await fetchFacebookPagesByUserTokenWithRetry(normalized);
+    if (pages.length > 0) return pages;
+  }
+  return [];
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchFacebookPagesByUserTokenWithRetry(
+  userAccessToken: string,
+  options?: { maxAttempts?: number; delayMs?: number },
+): Promise<FacebookPage[]> {
+  const maxAttempts = options?.maxAttempts ?? 5;
+  const delayMs = options?.delayMs ?? 1200;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const pages = await fetchFacebookPagesByUserToken(userAccessToken);
+    if (pages.length > 0) return pages;
+
+    if (attempt < maxAttempts) {
+      // Facebook Login for Business grantlari ba'zan darhol /me/accounts da ko'rinmasligi mumkin.
+      await sleep(delayMs);
+    }
+  }
+
+  const businessPages = await fetchFacebookPagesViaBusinesses(userAccessToken);
+  if (businessPages.length > 0) {
+    // eslint-disable-next-line no-console
+    console.log(`[facebook:oAuth] me/accounts bo'sh, business fallback ishladi pages=${businessPages.length}`);
+  }
+  return businessPages;
+}
+
 async function ensurePageLeadgenSubscription(pageId: string, pageAccessToken: string): Promise<void> {
   if (!pageAccessToken) return;
 
@@ -627,8 +743,56 @@ async function fetchFacebookPixels(userAccessToken: string): Promise<FacebookPix
   }
 }
 
-function normalizeBitrixWebhookUrl(url: string): string {
-  return url.endsWith('/') ? url : `${url}/`;
+function buildBitrixFieldEndpointCandidates(rawUrl: string): string[] {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return [];
+
+  const methodPrefixes = /^(?:crm|batch|user|profile|department|im|disk|tasks|lists|bizproc|telephony|catalog|sale|entity|sonet)\./i;
+
+  const makeBasePath = (path: string) => {
+    const normalized = path.replace(/\/+$/g, '');
+    const parts = normalized.split('/').filter(Boolean);
+    const last = parts.at(-1) ?? '';
+    if (methodPrefixes.test(last)) {
+      parts.pop();
+    }
+    return `/${parts.join('/')}/`;
+  };
+
+  const dedupe = new Set<string>();
+  const push = (value: string) => {
+    const v = value.trim();
+    if (!v) return;
+    if (dedupe.has(v)) return;
+    dedupe.add(v);
+  };
+
+  // If user already pasted exact fields endpoint, try it first as-is.
+  if (/crm\.lead\.fields(?:\.json)?(\?|$)/i.test(trimmed)) {
+    push(trimmed);
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const basePath = makeBasePath(parsed.pathname);
+    const query = parsed.search ?? '';
+    const origin = parsed.origin;
+
+    push(`${origin}${basePath}crm.lead.fields.json${query}`);
+    push(`${origin}${basePath}crm.lead.fields${query}`);
+    push(`${origin}${basePath}crm.lead.fields.json`);
+    push(`${origin}${basePath}crm.lead.fields`);
+  } catch {
+    const [pathPart, queryPartRaw] = trimmed.split("?");
+    const queryPart = queryPartRaw ? `?${queryPartRaw}` : "";
+    const basePath = makeBasePath(pathPart);
+    push(`${basePath}crm.lead.fields.json${queryPart}`);
+    push(`${basePath}crm.lead.fields${queryPart}`);
+    push(`${basePath}crm.lead.fields.json`);
+    push(`${basePath}crm.lead.fields`);
+  }
+
+  return Array.from(dedupe);
 }
 
 function callbackHtml(payload: Record<string, unknown>, targetOrigin: string): string {
@@ -682,11 +846,32 @@ router.get('/facebook/oauth/callback', async (req, res) => {
     const longTokenUrl = `${FB_GRAPH_API_BASE}/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(env.FB_APP_ID)}&client_secret=${encodeURIComponent(env.FB_APP_SECRET)}&fb_exchange_token=${encodeURIComponent(tokenPayload.access_token)}`;
     const longTokenPayload = await fetchFacebookJson<{ access_token: string }>(longTokenUrl).catch(() => tokenPayload);
     const userAccessToken = longTokenPayload.access_token;
+    const shortLivedUserAccessToken = tokenPayload.access_token;
 
     const meUrl = `${FB_GRAPH_API_BASE}/me?fields=id,name&access_token=${encodeURIComponent(userAccessToken)}`;
     const me = await fetchFacebookJson<{ id: string; name: string }>(meUrl);
 
-    const pages = await fetchFacebookPagesByUserToken(userAccessToken);
+    const pages = await fetchPagesWithTokenCandidates([
+      userAccessToken,
+      shortLivedUserAccessToken,
+    ]);
+    const grantedPermissions = await fetchGrantedPermissions(userAccessToken);
+    if (pages.length === 0) {
+      const businesses = await fetchFacebookBusinessesByUserToken(userAccessToken);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[facebook:oAuth] pages empty after OAuth; granted=${grantedPermissions.join(',') || 'none'} businesses=${businesses.length}`,
+      );
+      const requiredPermissions = ['pages_show_list', 'pages_read_engagement', 'pages_manage_metadata', 'leads_retrieval', 'business_management'];
+      const missingPermissions = requiredPermissions.filter((permission) => !grantedPermissions.includes(permission));
+      if (missingPermissions.length > 0) {
+        throw new Error(`Facebook ruxsatlari yetarli emas: ${missingPermissions.join(', ')}`);
+      }
+      throw new Error('Facebook sahifalari topilmadi: pages access bo\'sh qaytdi');
+    } else {
+      // eslint-disable-next-line no-console
+      console.log(`[facebook:oAuth] pages resolved count=${pages.length}`);
+    }
 
     const formFetchErrors: FacebookFormsFetchError[] = [];
     const pagesWithForms = await Promise.all(
@@ -723,6 +908,8 @@ router.get('/facebook/oauth/callback', async (req, res) => {
         pages: pagesWithForms,
         pixels,
         user_access_token: userAccessToken,
+        short_lived_user_access_token: shortLivedUserAccessToken,
+        granted_permissions: grantedPermissions,
         form_fetch_errors: formFetchErrors,
       },
     };
@@ -873,13 +1060,15 @@ router.get('/facebook/oauth/init', async (req, res, next) => {
       status: 'pending',
     });
     const blockedOauthScopes = new Set(['leads_retrieval']);
-    const requestedScopes = Array.from(new Set(
-      env.FB_OAUTH_SCOPES
+    const requiredScopes = ['pages_show_list', 'pages_read_engagement', 'pages_manage_metadata', 'business_management', 'pages_manage_ads'];
+    const requestedScopes = Array.from(new Set([
+      ...env.FB_OAUTH_SCOPES
         .split(',')
         .map((item) => item.trim())
         .filter(Boolean)
         .filter((item) => !blockedOauthScopes.has(item)),
-    ));
+      ...requiredScopes,
+    ]));
     const scope = requestedScopes.join(',');
 
     const params = new URLSearchParams({
@@ -1306,11 +1495,15 @@ router.post('/facebook/forms/refresh', async (req, res, next) => {
     const row = result.rows[0];
     const creds = JSON.parse(decrypt(String(row.credentials))) as {
       user_access_token?: string;
+      short_lived_user_access_token?: string;
       pages?: Array<{ id: string; name?: string; access_token?: string; forms?: FacebookLeadForm[] }>;
     };
     let pages = Array.isArray(creds.pages) ? creds.pages : [];
-    if (pages.length === 0 && creds.user_access_token) {
-      const fetchedPages = await fetchFacebookPagesByUserToken(creds.user_access_token);
+    if (pages.length === 0) {
+      const fetchedPages = await fetchPagesWithTokenCandidates([
+        creds.user_access_token ?? '',
+        creds.short_lived_user_access_token ?? '',
+      ]);
       pages = fetchedPages.map((page) => ({
         id: page.id,
         name: page.name,
@@ -1390,26 +1583,36 @@ router.post('/facebook/forms/refresh', async (req, res, next) => {
 const bitrixFieldsSchema = z.object({
   webhook_url: z.string().url('Bitrix24 Webhook URL noto\'g\'ri'),
 });
+const bitrixFieldsByIntegrationSchema = z.object({
+  integration_id: z.string().uuid('integration_id noto\'g\'ri'),
+});
 
-router.post('/bitrix/fields', async (req, res, next) => {
-  try {
-    const body = bitrixFieldsSchema.parse(req.body);
-    const endpoint = `${normalizeBitrixWebhookUrl(body.webhook_url)}crm.lead.fields.json`;
+async function loadBitrixLeadFields(webhookUrl: string) {
+  const candidates = buildBitrixFieldEndpointCandidates(webhookUrl);
+  if (candidates.length === 0) {
+    throw new AppError(400, 'Bitrix24 webhook URL bo\'sh yoki noto\'g\'ri');
+  }
 
+  let lastStatus: number | null = null;
+  let lastErrorMessage = 'Noma\'lum xato';
+
+  for (const endpoint of candidates) {
     const response = await fetch(endpoint);
     const payload = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      throw new AppError(400, `Bitrix24 maydonlarini olishda xato (${response.status})`);
+      lastStatus = response.status;
+      continue;
     }
 
     if (typeof (payload as { error?: string }).error === 'string') {
       const details = (payload as { error_description?: string }).error_description ?? 'Noma\'lum xato';
-      throw new AppError(400, `Bitrix24 credentials xato: ${details}`);
+      lastErrorMessage = details;
+      continue;
     }
 
     const fieldsObj = (payload as { result?: Record<string, BitrixLeadFieldMeta> }).result ?? {};
-    const fields = Object.entries(fieldsObj)
+    return Object.entries(fieldsObj)
       .map(([code, meta]) => ({
         code,
         title: meta.title ?? code,
@@ -1418,7 +1621,67 @@ router.post('/bitrix/fields', async (req, res, next) => {
         multiple: meta.isMultiple === true || meta.isMultiple === 'Y',
       }))
       .sort((a, b) => a.title.localeCompare(b.title));
+  }
 
+  if (lastStatus) {
+    throw new AppError(400, `Bitrix24 maydonlarini olishda xato (HTTP ${lastStatus})`);
+  }
+  throw new AppError(400, `Bitrix24 credentials xato: ${lastErrorMessage}`);
+}
+
+router.post('/bitrix/fields', async (req, res, next) => {
+  try {
+    const body = bitrixFieldsSchema.parse(req.body);
+    const fields = await loadBitrixLeadFields(body.webhook_url);
+    res.json({ fields, total: fields.length });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ error: err.errors[0].message });
+      return;
+    }
+    next(err);
+  }
+});
+
+router.get('/:id/bitrix/fields', async (req, res, next) => {
+  try {
+    const row = await findOwnedIntegration(req.params.id, req.user!.userId);
+    if (row.dest_type !== 'bitrix24') {
+      throw new AppError(400, 'Bu integratsiya Bitrix24 emas');
+    }
+    if (!row.dest_credentials) {
+      throw new AppError(400, 'Bitrix24 credential topilmadi');
+    }
+
+    const webhookUrl = decrypt(String(row.dest_credentials));
+    if (!webhookUrl?.trim()) {
+      throw new AppError(400, 'Bitrix24 webhook URL bo\'sh');
+    }
+
+    const fields = await loadBitrixLeadFields(webhookUrl);
+    res.json({ fields, total: fields.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/bitrix/fields/by-integration', async (req, res, next) => {
+  try {
+    const query = bitrixFieldsByIntegrationSchema.parse(req.query);
+    const row = await findOwnedIntegration(query.integration_id, req.user!.userId);
+    if (row.dest_type !== 'bitrix24') {
+      throw new AppError(400, 'Bu integratsiya Bitrix24 emas');
+    }
+    if (!row.dest_credentials) {
+      throw new AppError(400, 'Bitrix24 credential topilmadi');
+    }
+
+    const webhookUrl = decrypt(String(row.dest_credentials));
+    if (!webhookUrl?.trim()) {
+      throw new AppError(400, 'Bitrix24 webhook URL bo\'sh');
+    }
+
+    const fields = await loadBitrixLeadFields(webhookUrl);
     res.json({ fields, total: fields.length });
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -1456,14 +1719,28 @@ const createSchema = z.object({
 const updateSchema = createSchema.partial();
 
 function sanitizeIntegration(row: Record<string, unknown>) {
+  let destCredentialsPreview: string | null = null;
+  if (row.dest_type === 'bitrix24' && row.dest_credentials) {
+    try {
+      destCredentialsPreview = decrypt(String(row.dest_credentials));
+    } catch {
+      destCredentialsPreview = null;
+    }
+  }
+
   return {
     id: row.id,
     name: row.name,
     active: row.active,
     source_type: row.source_type,
+    source_connection_id: row.source_connection_id,
     source_page_id: row.source_page_id,
     source_form_id: row.source_form_id,
     dest_type: row.dest_type,
+    dest_connection_id: row.dest_connection_id,
+    dest_resource_id: row.dest_resource_id,
+    dest_sheet_name: row.dest_sheet_name,
+    dest_credentials_preview: destCredentialsPreview,
     dest_credentials_set: !!row.dest_credentials,
     field_mapping: row.field_mapping,
     notify_telegram_chat_id: row.notify_telegram_chat_id,
