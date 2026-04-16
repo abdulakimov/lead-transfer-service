@@ -118,6 +118,7 @@ export interface CreateIntegrationInput {
   dest_sheet_name?: string;
   dest_columns?: Array<{ source_field: string; column_title: string }>;
   dest_credentials?: string;
+  dest_funnel_id?: string | null;
   field_mapping?: Record<string, string>;
   notify_telegram_chat_id?: string | null;
   dedup_enabled?: boolean;
@@ -141,13 +142,6 @@ export interface FacebookFormFetchError {
   page_id: string;
   page_name?: string;
   error: string;
-}
-
-export interface FacebookConnectedPixel {
-  id: string;
-  name: string;
-  ad_account_id?: string;
-  ad_account_name?: string;
 }
 
 export interface FacebookSourceField {
@@ -258,7 +252,6 @@ export type FacebookOAuthResultResponse =
     payload: {
       profile: { id: string; name: string; user_id: string };
       pages: FacebookConnectedPage[];
-      pixels: FacebookConnectedPixel[];
       user_access_token: string;
       short_lived_user_access_token?: string;
       granted_permissions?: string[];
@@ -304,86 +297,6 @@ export interface DispatchWorkflowResponse {
   };
 }
 
-export interface MetaPixelConfig {
-  id: string;
-  name: string;
-  active: boolean;
-  pixel_id: string;
-  auto_page_view: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface MetaPixelEvent {
-  id: string;
-  event_name: string;
-  event_id: string;
-  event_time: string;
-  action_source: string;
-  event_source_url?: string | null;
-  fbq_sent: boolean;
-  blocked_reason?: string | null;
-  created_at: string;
-  pixel_id: string;
-  config_name: string;
-}
-
-export interface MetaPixelDiagnostics {
-  summary: {
-    pixel_events: number;
-    capi_events: number;
-    missing_in_capi: number;
-    missing_in_pixel: number;
-    event_name_mismatch: number;
-    timestamp_drift: number;
-  };
-  samples: {
-    missing_in_capi: Array<Record<string, unknown>>;
-    missing_in_pixel: Array<Record<string, unknown>>;
-    event_name_mismatch: Array<Record<string, unknown>>;
-    timestamp_drift: Array<Record<string, unknown>>;
-  };
-}
-
-export interface MetaCapiEventQueueResponse {
-  queued?: boolean;
-  duplicate?: boolean;
-  event: {
-    id: string;
-    event_id: string;
-    event_name: string;
-    event_time: string;
-    status?: string;
-    created_at: string;
-  };
-}
-
-export interface MetaCapiConfig {
-  id: string;
-  name: string;
-  active: boolean;
-  pixel_id: string;
-  created_at: string;
-  updated_at: string;
-  has_access_token?: boolean;
-  has_test_event_code?: boolean;
-}
-
-export interface MetaCapiEvent {
-  id: string;
-  event_name: string;
-  event_id: string;
-  event_time: string;
-  source: string;
-  status: "pending" | "processing" | "delivered" | "failed" | "dlq" | "duplicate";
-  attempts: number;
-  last_error?: string | null;
-  delivered_at?: string | null;
-  created_at: string;
-  updated_at: string;
-  pixel_id: string;
-  config_name: string;
-}
 
 export function login(email: string, password: string): Promise<LoginResponse> {
   return request<LoginResponse>("/api/auth/login", {
@@ -629,6 +542,36 @@ export function getBitrixLeadFields(webhookUrl: string, token: string): Promise<
   );
 }
 
+export interface BitrixFunnel {
+  id: string;
+  name: string;
+}
+
+export function getBitrixFunnels(
+  webhookUrl: string,
+  token: string,
+): Promise<{ funnels: BitrixFunnel[]; total: number }> {
+  return request<{ funnels: BitrixFunnel[]; total: number }>(
+    "/api/integrations/bitrix/funnels",
+    {
+      method: "POST",
+      body: JSON.stringify({ webhook_url: webhookUrl }),
+    },
+    token,
+  );
+}
+
+export function getBitrixFunnelsByIntegration(
+  integrationId: string,
+  token: string,
+): Promise<{ funnels: BitrixFunnel[]; total: number }> {
+  return request<{ funnels: BitrixFunnel[]; total: number }>(
+    `/api/integrations/${encodeURIComponent(integrationId)}/bitrix/funnels`,
+    {},
+    token,
+  );
+}
+
 export function getBitrixLeadFieldsByIntegration(
   integrationId: string,
   token: string,
@@ -755,140 +698,4 @@ export function getWorkflowRuns(token: string): Promise<WorkflowRunsResponse> {
 
 export function getWorkflowRunDetail(runId: string, token: string): Promise<WorkflowRunDetail> {
   return request<WorkflowRunDetail>(`/api/workflows/runs/${runId}`, {}, token);
-}
-
-export function getMetaPixelConfigs(token: string): Promise<{ configs: MetaPixelConfig[] }> {
-  return request<{ configs: MetaPixelConfig[] }>("/api/meta-pixel/config", {}, token);
-}
-
-export function upsertMetaPixelConfig(
-  input: { name: string; pixel_id: string; active: boolean; auto_page_view: boolean },
-  token: string,
-): Promise<{ config: MetaPixelConfig }> {
-  return request<{ config: MetaPixelConfig }>(
-    "/api/meta-pixel/config",
-    {
-      method: "POST",
-      body: JSON.stringify(input),
-    },
-    token,
-  );
-}
-
-export function trackMetaPixelBrowserEvent(
-  input: {
-    config_id?: string;
-    integration_id?: string;
-    source?: string;
-    event_name: string;
-    event_id: string;
-    event_time?: string;
-    action_source?: "website" | "app" | "phone_call" | "chat" | "physical_store" | "system_generated" | "business_messaging" | "other";
-    event_source_url?: string;
-    user_data?: Record<string, unknown>;
-    custom_data?: Record<string, unknown>;
-    browser_meta?: Record<string, unknown>;
-    fbq_sent?: boolean;
-    blocked_reason?: string;
-  },
-  token: string,
-): Promise<{ event: MetaPixelEvent }> {
-  return request<{ event: MetaPixelEvent }>(
-    "/api/meta-pixel/events",
-    {
-      method: "POST",
-      body: JSON.stringify(input),
-    },
-    token,
-  );
-}
-
-export function getMetaPixelEvents(
-  token: string,
-  params?: { limit?: number; offset?: number },
-): Promise<{ events: MetaPixelEvent[]; total: number; limit: number; offset: number }> {
-  const query = new URLSearchParams();
-  query.set("limit", String(params?.limit ?? 50));
-  query.set("offset", String(params?.offset ?? 0));
-  return request<{ events: MetaPixelEvent[]; total: number; limit: number; offset: number }>(
-    `/api/meta-pixel/events?${query.toString()}`,
-    {},
-    token,
-  );
-}
-
-export function getMetaPixelDiagnostics(token: string): Promise<MetaPixelDiagnostics> {
-  return request<MetaPixelDiagnostics>("/api/meta-pixel/diagnostics", {}, token);
-}
-
-export function enqueueMetaCapiEvent(
-  input: {
-    config_id?: string;
-    integration_id?: string;
-    source?: string;
-    event_name: string;
-    event_id?: string;
-    event_time?: string;
-    action_source?: "website" | "app" | "phone_call" | "chat" | "physical_store" | "system_generated" | "business_messaging" | "other";
-    event_source_url?: string;
-    user_data?: Record<string, unknown>;
-    custom_data?: Record<string, unknown>;
-  },
-  token: string,
-): Promise<MetaCapiEventQueueResponse> {
-  return request<MetaCapiEventQueueResponse>(
-    "/api/meta-capi/events",
-    {
-      method: "POST",
-      body: JSON.stringify(input),
-    },
-    token,
-  );
-}
-
-export function getMetaCapiConfigs(token: string): Promise<{ configs: MetaCapiConfig[] }> {
-  return request<{ configs: MetaCapiConfig[] }>("/api/meta-capi/config", {}, token);
-}
-
-export function upsertMetaCapiConfig(
-  input: {
-    name: string;
-    pixel_id: string;
-    access_token: string;
-    test_event_code?: string | null;
-    active: boolean;
-  },
-  token: string,
-): Promise<{ config: MetaCapiConfig }> {
-  return request<{ config: MetaCapiConfig }>(
-    "/api/meta-capi/config",
-    {
-      method: "POST",
-      body: JSON.stringify(input),
-    },
-    token,
-  );
-}
-
-export function getMetaCapiEvents(
-  token: string,
-  params?: { status?: string; limit?: number; offset?: number },
-): Promise<{ events: MetaCapiEvent[]; total: number; limit: number; offset: number }> {
-  const query = new URLSearchParams();
-  query.set("limit", String(params?.limit ?? 20));
-  query.set("offset", String(params?.offset ?? 0));
-  if (params?.status) query.set("status", params.status);
-  return request<{ events: MetaCapiEvent[]; total: number; limit: number; offset: number }>(
-    `/api/meta-capi/events?${query.toString()}`,
-    {},
-    token,
-  );
-}
-
-export function retryMetaCapiEvent(eventId: string, token: string): Promise<{ message: string; event_id: string }> {
-  return request<{ message: string; event_id: string }>(
-    `/api/meta-capi/events/${encodeURIComponent(eventId)}/retry`,
-    { method: "POST" },
-    token,
-  );
 }

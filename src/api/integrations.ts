@@ -46,13 +46,6 @@ interface FacebookFormsFetchError {
   error: string;
 }
 
-interface FacebookPixel {
-  id: string;
-  name: string;
-  ad_account_id?: string;
-  ad_account_name?: string;
-}
-
 interface FacebookFormQuestion {
   key?: string;
   label?: string;
@@ -99,7 +92,6 @@ type FacebookOAuthResult =
     payload: {
       profile: { id: string; name: string; user_id: string };
       pages: Array<FacebookPage & { forms: FacebookLeadForm[] }>;
-      pixels: FacebookPixel[];
       user_access_token: string;
       short_lived_user_access_token?: string;
       granted_permissions?: string[];
@@ -711,38 +703,6 @@ async function ensurePageLeadgenSubscription(pageId: string, pageAccessToken: st
   }
 }
 
-async function fetchFacebookPixels(userAccessToken: string): Promise<FacebookPixel[]> {
-  try {
-    const url = `${FB_GRAPH_API_BASE}/me/adaccounts?fields=id,name,account_id,owned_pixels{id,name}&access_token=${encodeURIComponent(userAccessToken)}`;
-    const payload = await fetchFacebookJson<{
-      data?: Array<{
-        id?: string;
-        name?: string;
-        account_id?: string;
-        owned_pixels?: { data?: Array<{ id?: string; name?: string }> };
-      }>;
-    }>(url);
-
-    const byId = new Map<string, FacebookPixel>();
-    for (const account of payload.data ?? []) {
-      const accountId = account.account_id ?? account.id;
-      const accountName = account.name;
-      for (const pixel of account.owned_pixels?.data ?? []) {
-        if (!pixel.id) continue;
-        byId.set(pixel.id, {
-          id: pixel.id,
-          name: pixel.name ?? pixel.id,
-          ad_account_id: accountId,
-          ad_account_name: accountName,
-        });
-      }
-    }
-    return Array.from(byId.values());
-  } catch {
-    return [];
-  }
-}
-
 function buildBitrixFieldEndpointCandidates(rawUrl: string): string[] {
   const trimmed = rawUrl.trim();
   if (!trimmed) return [];
@@ -899,14 +859,11 @@ router.get('/facebook/oauth/callback', async (req, res) => {
         };
       }),
     );
-    const pixels = await fetchFacebookPixels(userAccessToken);
-
     const oauthResult: FacebookOAuthResult = {
       success: true,
       payload: {
         profile: { id: me.id, name: me.name, user_id: state.userId },
         pages: pagesWithForms,
-        pixels,
         user_access_token: userAccessToken,
         short_lived_user_access_token: shortLivedUserAccessToken,
         granted_permissions: grantedPermissions,
@@ -1081,6 +1038,10 @@ router.get('/facebook/oauth/init', async (req, res, next) => {
     if (env.FB_OAUTH_CONFIG_ID) {
       params.set('config_id', env.FB_OAUTH_CONFIG_ID);
     }
+    // eslint-disable-next-line no-console
+    console.log(
+      `[facebook:oAuth:init] user=${req.user!.userId} config_id=${env.FB_OAUTH_CONFIG_ID ? 'set' : 'empty'} redirect=${env.FB_OAUTH_REDIRECT_URI} scopes=${scope}`,
+    );
     const authUrl = `https://www.facebook.com/v25.0/dialog/oauth?${params.toString()}`;
     res.json({ auth_url: authUrl, state });
   } catch (err) {
@@ -1454,7 +1415,9 @@ router.post('/facebook/form-fields', async (req, res, next) => {
     }
 
     const url = `${FB_GRAPH_API_BASE}/${encodeURIComponent(body.form_id)}?fields=questions&access_token=${encodeURIComponent(pageAccessToken)}`;
-    const payload = await fetchFacebookJson<{ questions?: FacebookFormQuestion[] }>(url);
+    const payload = await fetchFacebookJson<{ questions?: FacebookFormQuestion[] }>(url).catch((err: unknown) => {
+      throw new AppError(400, err instanceof Error ? err.message : 'Facebook API xatosi');
+    });
 
     const questions = payload.questions ?? [];
     const fields = questions
@@ -1692,6 +1655,62 @@ router.get('/bitrix/fields/by-integration', async (req, res, next) => {
   }
 });
 
+const bitrixFunnelsSchema = z.object({
+  webhook_url: z.string().url('Bitrix24 Webhook URL noto\'g\'ri'),
+});
+
+async function loadBitrixFunnels(webhookUrl: string) {
+  const base = webhookUrl.replace(/\/$/, '');
+  const url = `${base}/crm.funnel.list.json`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new AppError(400, `Bitrix24 funnel API xatosi (HTTP ${response.status})`);
+  }
+  const payload = await response.json().catch(() => ({})) as {
+    error?: string;
+    error_description?: string;
+    result?: Array<{ ID?: string | number; NAME?: string }>;
+  };
+  if (payload.error) {
+    throw new AppError(400, payload.error_description ?? payload.error);
+  }
+  const items = payload.result ?? [];
+  return items
+    .filter((f) => f.ID !== undefined && f.NAME)
+    .map((f) => ({ id: String(f.ID), name: String(f.NAME) }));
+}
+
+router.post('/bitrix/funnels', async (req, res, next) => {
+  try {
+    const body = bitrixFunnelsSchema.parse(req.body);
+    const funnels = await loadBitrixFunnels(body.webhook_url);
+    res.json({ funnels, total: funnels.length });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ error: err.errors[0].message });
+      return;
+    }
+    next(err);
+  }
+});
+
+router.get('/:id/bitrix/funnels', async (req, res, next) => {
+  try {
+    const row = await findOwnedIntegration(req.params.id, req.user!.userId);
+    if (row.dest_type !== 'bitrix24') {
+      throw new AppError(400, 'Bu integratsiya Bitrix24 emas');
+    }
+    if (!row.dest_credentials) {
+      throw new AppError(400, 'Bitrix24 credential topilmadi');
+    }
+    const webhookUrl = decrypt(String(row.dest_credentials));
+    const funnels = await loadBitrixFunnels(webhookUrl);
+    res.json({ funnels, total: funnels.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const createSchema = z.object({
   name: z.string().min(1, 'Nom kiritilishi shart'),
   source_type: z.enum(['facebook', 'google_forms']).default('facebook'),
@@ -1703,6 +1722,7 @@ const createSchema = z.object({
   dest_connection_id: z.string().uuid().optional(),
   dest_resource_id: z.string().optional(),
   dest_sheet_name: z.string().optional(),
+  dest_funnel_id: z.string().nullable().optional(),
   dest_columns: z.array(
     z.object({
       source_field: z.string().min(1),
@@ -1723,7 +1743,9 @@ function sanitizeIntegration(row: Record<string, unknown>) {
   if (row.dest_type === 'bitrix24' && row.dest_credentials) {
     try {
       destCredentialsPreview = decrypt(String(row.dest_credentials));
-    } catch {
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[sanitizeIntegration] Bitrix24 decrypt failed for id', row.id, err);
       destCredentialsPreview = null;
     }
   }
@@ -1740,6 +1762,7 @@ function sanitizeIntegration(row: Record<string, unknown>) {
     dest_connection_id: row.dest_connection_id,
     dest_resource_id: row.dest_resource_id,
     dest_sheet_name: row.dest_sheet_name,
+    dest_funnel_id: row.dest_funnel_id,
     dest_credentials_preview: destCredentialsPreview,
     dest_credentials_set: !!row.dest_credentials,
     field_mapping: row.field_mapping,
@@ -1794,7 +1817,12 @@ async function ensureNoActiveDuplicateIntegration(params: {
   );
 
   for (const row of result.rows) {
-    const existingPlain = decrypt(String(row.dest_credentials));
+    let existingPlain: string;
+    try {
+      existingPlain = decrypt(String(row.dest_credentials));
+    } catch {
+      continue; // skip rows whose credentials can't be decrypted (corrupted / key rotation)
+    }
     if (existingPlain === params.destCredentialsPlain) {
       throw new AppError(
         409,
@@ -1939,19 +1967,31 @@ router.post('/', async (req, res, next) => {
 
     const result = await pool.query(
       `INSERT INTO integrations (
-        user_id, name, source_type, source_page_id, source_page_access_token,
-        source_form_id, dest_type, dest_credentials, field_mapping,
+        user_id, name, source_type, source_connection_id, source_page_id,
+        source_page_access_token, source_form_id,
+        dest_type, dest_connection_id, dest_resource_id, dest_sheet_name, dest_funnel_id,
+        dest_credentials, field_mapping,
         notify_telegram_chat_id, dedup_enabled, dedup_field
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
       RETURNING *`,
       [
-        req.user!.userId, body.name, body.source_type,
+        req.user!.userId,
+        body.name,
+        body.source_type,
+        body.source_connection_id ?? null,
         body.source_type === 'google_forms' ? (body.source_connection_id ?? null) : (body.source_page_id ?? null),
         encryptedPageToken,
         body.source_form_id ?? null,
-        body.dest_type, encryptedCreds,
-        JSON.stringify(body.field_mapping), body.notify_telegram_chat_id ?? null,
-        body.dedup_enabled, body.dedup_field,
+        body.dest_type,
+        body.dest_connection_id ?? null,
+        body.dest_resource_id ?? null,
+        body.dest_sheet_name ?? null,
+        body.dest_funnel_id ?? null,
+        encryptedCreds,
+        JSON.stringify(body.field_mapping),
+        body.notify_telegram_chat_id ?? null,
+        body.dedup_enabled,
+        body.dedup_field,
       ],
     );
 
@@ -2057,9 +2097,16 @@ router.put('/:id', async (req, res, next) => {
     ) as string | null;
     const mergedDestType = (body.dest_type ?? existing.dest_type) as string;
     const mergedActive = Boolean(existing.active);
-    const mergedDestCredentialsPlain = typeof body.dest_credentials === 'string'
-      ? body.dest_credentials
-      : decrypt(String(existing.dest_credentials));
+    let mergedDestCredentialsPlain: string;
+    if (typeof body.dest_credentials === 'string') {
+      mergedDestCredentialsPlain = body.dest_credentials;
+    } else {
+      try {
+        mergedDestCredentialsPlain = decrypt(String(existing.dest_credentials));
+      } catch {
+        mergedDestCredentialsPlain = ''; // credentials unreadable; skip duplicate check
+      }
+    }
 
     if (mergedActive) {
       await ensureNoActiveDuplicateIntegration({

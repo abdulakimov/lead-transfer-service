@@ -14,6 +14,7 @@ export interface Integration {
   dest_connection_id?: string | null;
   dest_resource_id?: string | null;
   dest_sheet_name?: string | null;
+  dest_funnel_id?: string | null;
   dest_credentials_preview?: string | null;
   dest_credentials_set?: boolean;
   field_mapping?: Record<string, string>;
