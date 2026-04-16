@@ -9,13 +9,10 @@ import integrationsRoutes from './api/integrations.js';
 import connectionsRoutes from './api/connections.js';
 import leadsRoutes from './api/leads.js';
 import workflowsRoutes from './api/workflows.js';
-import metaCapiRoutes from './api/meta-capi.js';
-import metaPixelRoutes from './api/meta-pixel.js';
 import facebookWebhook from './webhooks/facebook.js';
 import googleFormsWebhook from './webhooks/google-forms.js';
 import { startLeadWorker } from './workers/lead-processor.js';
 import { startGoogleFormsPoller } from './workers/google-forms-poller.js';
-import { startMetaCapiWorker } from './workers/meta-capi-processor.js';
 
 const env = loadEnv();
 const app = express();
@@ -51,13 +48,6 @@ app.use('/api/integrations', integrationsRoutes);
 app.use('/api/connections', connectionsRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/workflows', workflowsRoutes);
-if (env.TRACKING_ENABLED) {
-  app.use('/api/meta-capi', metaCapiRoutes);
-  app.use('/api/meta-pixel', metaPixelRoutes);
-} else {
-  // eslint-disable-next-line no-console
-  console.log('[tracking] disabled: meta-capi/meta-pixel API route-lari o\'chirildi');
-}
 app.use(
   '/webhooks/facebook',
   createRateLimiter({ windowMs: 60_000, max: 300, keyPrefix: 'facebook-webhook' }),
@@ -79,7 +69,6 @@ const server = app.listen(env.PORT, () => {
 });
 
 const worker = startLeadWorker();
-const metaCapiWorker = env.TRACKING_ENABLED ? startMetaCapiWorker() : null;
 const googleFormsPoller = startGoogleFormsPoller();
 
 // Graceful shutdown
@@ -87,9 +76,6 @@ async function shutdown() {
   // eslint-disable-next-line no-console
   console.log('Server to\'xtatilmoqda...');
   await googleFormsPoller.close();
-  if (metaCapiWorker) {
-    await metaCapiWorker.close();
-  }
   await worker.close();
   server.close();
   process.exit(0);

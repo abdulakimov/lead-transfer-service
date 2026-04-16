@@ -96,7 +96,6 @@ function ConnectionsContent() {
               credentials: {
                 profile: result.payload.profile,
                 pages: oauthPages,
-                pixels: result.payload.pixels,
                 user_access_token: result.payload.user_access_token,
                 short_lived_user_access_token: result.payload.short_lived_user_access_token,
               },
@@ -107,7 +106,6 @@ function ConnectionsContent() {
                   name: p.name,
                   forms: p.forms,
                 })),
-                pixels: result.payload.pixels,
               },
             },
             token,

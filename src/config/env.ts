@@ -1,15 +1,12 @@
 import { z } from 'zod';
 
-const envBoolean = z.preprocess((input) => {
-  if (typeof input === 'boolean') return input;
-  if (typeof input === 'number') return input === 1;
-  if (typeof input !== 'string') return input;
-
-  const normalized = input.trim().toLowerCase();
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'off', ''].includes(normalized)) return false;
-  return input;
-}, z.boolean());
+const REQUIRED_FB_SCOPES = [
+  'pages_show_list',
+  'pages_read_engagement',
+  'pages_manage_metadata',
+  'business_management',
+  'pages_manage_ads',
+] as const;
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
@@ -35,8 +32,6 @@ const envSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
 
   TELEGRAM_BOT_TOKEN: z.string().default(''),
-
-  TRACKING_ENABLED: envBoolean.default(false),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -55,6 +50,30 @@ export function loadEnv(): Env {
   }
 
   _env = result.data;
+
+  if (_env.NODE_ENV === 'production') {
+    if (!_env.FB_OAUTH_CONFIG_ID.trim()) {
+      throw new Error('Muhit o\'zgaruvchilari xatosi:\n  FB_OAUTH_CONFIG_ID: productionda bo\'sh bo\'lishi mumkin emas');
+    }
+
+    const scopeSet = new Set(
+      _env.FB_OAUTH_SCOPES
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    );
+    const missingScopes = REQUIRED_FB_SCOPES.filter((scope) => !scopeSet.has(scope));
+    if (missingScopes.length > 0) {
+      throw new Error(
+        `Muhit o'zgaruvchilari xatosi:\n  FB_OAUTH_SCOPES: required scope yetishmaydi -> ${missingScopes.join(', ')}`,
+      );
+    }
+
+    if (!_env.FB_OAUTH_REDIRECT_URI.startsWith('https://')) {
+      throw new Error('Muhit o\'zgaruvchilari xatosi:\n  FB_OAUTH_REDIRECT_URI: productionda https bo\'lishi shart');
+    }
+  }
+
   return _env;
 }
 

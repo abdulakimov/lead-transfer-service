@@ -182,3 +182,17 @@ curl -i -X POST http://127.0.0.1:3000/webhooks/facebook \
 curl -s "http://127.0.0.1:3000/api/leads?integration_id=<INTEGRATION_ID>&limit=20" \
   -H "Authorization: Bearer <ACCESS_TOKEN>"
 ```
+
+## 2026-04-15 Regression Notes
+
+### Code-side readiness updates
+- Removed Meta Pixel/CAPI runtime modules and UI paths.
+- Enforced strict Facebook OAuth production guards (`config_id`, required scopes, https redirect).
+- Workflow default trigger migrated to lead bridge (`lead.received`).
+
+### Manual Facebook E2E checklist (post-deploy)
+1. `/api/integrations/facebook/oauth/init` returns auth URL with strict scopes and `config_id`.
+2. OAuth callback stores pages/forms successfully.
+3. Facebook webhook `POST /webhooks/facebook` receives leadgen event.
+4. Lead worker fetches full lead and delivers to selected CRM.
+5. Lead status reaches `delivered`; run/steps visible in workflows/runs.

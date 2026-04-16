@@ -74,7 +74,6 @@ test('facebook connect recovers when oauth returns empty pages then refresh reso
         payload: {
           profile: { id: 'fb-user-1', name: 'Xurshidbek Abdulakimov', user_id: 'app-user-1' },
           pages: [],
-          pixels: [],
           user_access_token: 'user-token-1',
         },
       }),

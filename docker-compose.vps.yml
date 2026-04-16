@@ -1,0 +1,75 @@
+services:
+  leadflow-postgres:
+    image: postgres:15-alpine
+    container_name: leadflow-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-leadflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-leadflow}
+      POSTGRES_DB: ${POSTGRES_DB:-leadflow}
+    volumes:
+      - leadflow_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-leadflow} -d ${POSTGRES_DB:-leadflow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  leadflow-redis:
+    image: redis:7-alpine
+    container_name: leadflow-redis
+    volumes:
+      - leadflow_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  leadflow-backend:
+    container_name: leadflow-backend
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-leadflow}:${POSTGRES_PASSWORD:-leadflow}@leadflow-postgres:5432/${POSTGRES_DB:-leadflow}
+      REDIS_URL: redis://leadflow-redis:6379
+      PORT: 3000
+      NODE_ENV: production
+    command: sh -lc "node dist/db/migrate.js && node dist/index.js"
+    depends_on:
+      leadflow-postgres:
+        condition: service_healthy
+      leadflow-redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:19080:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  leadflow-frontend:
+    container_name: leadflow-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: ""
+    depends_on:
+      leadflow-backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:19081:3001"
+    restart: unless-stopped
+
+volumes:
+  leadflow_pgdata:
+  leadflow_redisdata:

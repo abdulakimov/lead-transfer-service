@@ -932,3 +932,22 @@ Applied direct UX corrections requested by product owner for `/integrations/:id`
 - `npm --prefix frontend run typecheck` passed.
 - Playwright audit test executed; current local run redirects to `/login` due existing auth-routing behavior in e2e harness (tracked for follow-up test harness stabilization).
 
+
+## 2026-04-15 Update - Meta/Pixel/CAPI Removed
+
+### Scope completed
+- Meta Pixel/CAPI backend routes, queue, worker, services removed from runtime.
+- Frontend tracking bootstrap/settings removed.
+- Workflow defaults moved from `meta.lead.created` to `lead.received` (`lead_bridge`).
+- Legacy meta trigger path now rejected with migration guidance.
+
+### Verified by commands
+- `npm run typecheck`
+- `npm run typecheck:frontend`
+- `npm test`
+- `npm --prefix frontend run test:e2e` (1 pass, 1 skip)
+- `npm run db:migrate`
+
+### Notes
+- DB historical tracking tables are retained; migration only deactivates configs and changes workflow defaults.
+- Facebook OAuth still used for pages/forms integration; pixel payload was removed from OAuth result.

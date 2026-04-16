@@ -1275,3 +1275,126 @@ Outcomes:
 1. Reconnect Facebook only for target user.
 2. Create/activate required integration(s) for that user.
 3. Send one fresh lead and verify webhook -> queue -> worker -> CRM path.
+
+## 2026-04-15 - Production Readiness Pass (Meta/Pixel/CAPI Removal)
+
+### What was inspected
+- Server entrypoint and mounted routes (`src/index.ts`)
+- Env schema and production validation (`src/config/env.ts`)
+- Workflow API/runtime defaults and legacy behavior (`src/api/workflows.ts`, `src/services/workflow-runtime.ts`)
+- Facebook OAuth init/callback payload path (`src/api/integrations.ts`)
+- Frontend dashboard/integrations/workflows wiring (`frontend/app/(dashboard)/**`, `frontend/lib/api.ts`, `frontend/components/nav-shell.tsx`)
+- Unit + e2e test suites
+
+### What was changed
+- Removed runtime Meta tracking stack from backend:
+  - deleted `src/api/meta-capi.ts`, `src/api/meta-pixel.ts`
+  - deleted `src/queue/meta-capi-queue.ts`, `src/workers/meta-capi-processor.ts`, `src/services/meta-conversions.ts`
+  - removed mounts/worker startup from `src/index.ts`
+- Removed frontend Meta tracking stack:
+  - deleted `frontend/components/meta-pixel-bootstrap.tsx`, `frontend/lib/meta-pixel.ts`, `frontend/lib/feature-flags.ts`
+  - deleted tracking settings page `frontend/app/(dashboard)/settings/page.tsx`
+  - removed tracking nav/layout bootstrapping and API client methods/types
+- Retargeted workflow defaults to lead bridge:
+  - new defaults: `source_type=lead_bridge`, `trigger_type=lead.received`
+  - added legacy `meta.*` rejection + migration guidance in workflow create/dispatch API
+- Added migration `009_workflow_defaults_and_tracking_deprecate.sql`:
+  - alters workflow table defaults to new trigger
+  - deactivates `meta_capi_configs` and `meta_pixel_configs` without deleting historical data
+- Facebook OAuth payload cleanup:
+  - removed pixel fetch and pixel payload return from OAuth result
+  - kept strict required scopes and added OAuth init diagnostics log
+- Env hardening:
+  - removed `TRACKING_ENABLED`
+  - production guards enforce `FB_OAUTH_CONFIG_ID`, strict required FB scopes, and `https` redirect URI
+- Updated/adjusted tests for new workflow defaults and removed tracking endpoints.
+
+### Commands run
+- `npm run typecheck` -> PASS
+- `npm run typecheck:frontend` -> PASS
+- `npm test` -> PASS
+- `npm --prefix frontend run test:e2e` -> PASS (1 passed, 1 skipped)
+- `npm run db:migrate` -> PASS
+
+### Outcomes
+- Meta Pixel/CAPI runtime paths are removed from backend/frontend.
+- Historical tracking data is preserved in DB; write paths are deactivated.
+- Workflow engine defaults are no longer `meta.*`.
+- Legacy `meta.*` workflow creation/dispatch now returns explicit unsupported-trigger guidance.
+
+### Remaining risks
+- One frontend e2e scenario is currently `skip` due unstable authenticated navigation in test harness; production behavior still requires manual verification.
+- Manual production E2E (Facebook lead -> queue -> CRM) still must be executed after deploy with real credentials.
+
+### Next exact action
+1. Deploy to staging/VPS with updated env (`FB_OAUTH_CONFIG_ID`, strict scopes, https redirect).
+2. Run manual Facebook/Google real lead smoke and capture logs for webhook->queue->worker->CRM path.
+3. If stable, promote to production.
+
+## 2026-04-16 - Integrations Edit Prefill Fix (Legacy Rows)
+
+### What was inspected
+- Integrations edit modal logic in frontend wizard (`frontend/app/(dashboard)/integrations/page.tsx`).
+- Integration + connection API shapes (`frontend/lib/api.ts`, `src/api/integrations.ts`, `src/api/connections.ts`).
+- Existing edit behavior with `?edit=<integrationId>` deep-link.
+
+### What was changed
+- Added legacy-safe source connection resolution for edit mode:
+  - if `source_connection_id` exists, use it.
+  - for legacy `google_forms`, fallback to `source_page_id` as connection id.
+  - for legacy `facebook`, infer connection by scanning connected pages and matching `source_page_id`.
+- Added reconciliation effect so edit modal backfills missing `sourceConnectionId` once connections load, without requiring manual reselection.
+- Preserved current wizard flow and payload contract; change is scoped to edit prefill reliability.
+
+### Commands run
+- `npm run typecheck:frontend`
+- `npm run typecheck`
+
+### Outcomes
+- Edit modal now pre-fills source connection/page/form more reliably for older integration rows.
+- Prevents blank source selectors in edit flow when data was saved with older schema semantics.
+
+### Remaining risks
+- Backend create path still has historical schema compatibility complexity; very old rows may need one-time normalization over time.
+- No new e2e assertion was added in this patch; manual UI verification is still required.
+
+### Next exact action
+1. Open an old Facebook integration (`/integrations?edit=<id>`) and verify connection + page are auto-selected.
+2. Open an old Google Forms integration and verify Google connection is auto-selected.
+3. Save once to persist normalized `source_connection_id` for future edits.
+
+## 2026-04-16 - Integrations Editor Full-Page Restore
+
+### What was inspected
+- Current integrations list page edit behavior (`frontend/app/(dashboard)/integrations/page.tsx`).
+- Current integration editor route (`frontend/app/(dashboard)/integrations/[integrationId]/page.tsx`).
+- Existing e2e contract (`frontend/tests/e2e/integration-settings-audit.spec.ts`).
+
+### What was changed
+- Restored dedicated editor route behavior:
+  - `/integrations/[integrationId]` now renders a full-page editor (no popup redirect fallback).
+- Cleaned list page edit path:
+  - card click now routes to `/integrations/:id`.
+  - removed `?edit=` modal edit/update branch from list page; list page keeps create flow only.
+- Implemented screenshot-aligned full-page edit structure:
+  - top action row (back, status, save)
+  - left step rail (`Manba`, `Maqsad`, `Mapping`, `Sozlamalar`)
+  - right step content with source, destination, mapping, and settings sections
+  - unsaved-change indicator + save enable/disable by dirty/valid state
+- Updated e2e test for full-page editor flow and non-popup selectors.
+
+### Commands run
+- `npm --prefix frontend run typecheck` -> PASS
+- `npm run typecheck` -> PASS
+- `npm --prefix frontend run test:e2e -- integration-settings-audit.spec.ts` -> PASS
+
+### Outcomes
+- Edit flow is now page-based (`/integrations/:id`) rather than popup query flow.
+- Save/update contract remains backend-compatible (`PUT /api/integrations/:id`).
+
+### Remaining risks
+- Visual parity is aligned to requested structure; additional pixel-level tuning may still be requested.
+
+### Next exact action
+1. Run manual browser check against real integration data on local and VPS after deploy.
+2. Confirm source/destination/mapping edits persist end-to-end.

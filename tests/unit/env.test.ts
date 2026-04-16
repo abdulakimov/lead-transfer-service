@@ -2,15 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 
 describe('env validation', () => {
-  const envBoolean = z.preprocess((input) => {
-    if (typeof input === 'boolean') return input;
-    if (typeof input === 'number') return input === 1;
-    if (typeof input !== 'string') return input;
-    const normalized = input.trim().toLowerCase();
-    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-    if (['0', 'false', 'no', 'off', ''].includes(normalized)) return false;
-    return input;
-  }, z.boolean());
 
   // Test the schema logic directly without importing the singleton
   const envSchema = z.object({
@@ -26,7 +17,6 @@ describe('env validation', () => {
     JWT_EXPIRES_IN: z.string().default('15m'),
     JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
     TELEGRAM_BOT_TOKEN: z.string().default(''),
-    TRACKING_ENABLED: envBoolean.default(false),
   });
 
   const validEnv = {
@@ -77,21 +67,5 @@ describe('env validation', () => {
   it('should reject invalid NODE_ENV', () => {
     const result = envSchema.safeParse({ ...validEnv, NODE_ENV: 'staging' });
     expect(result.success).toBe(false);
-  });
-
-  it('should parse TRACKING_ENABLED=false as false', () => {
-    const result = envSchema.safeParse({ ...validEnv, TRACKING_ENABLED: 'false' });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.TRACKING_ENABLED).toBe(false);
-    }
-  });
-
-  it('should parse TRACKING_ENABLED=true as true', () => {
-    const result = envSchema.safeParse({ ...validEnv, TRACKING_ENABLED: 'true' });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.TRACKING_ENABLED).toBe(true);
-    }
   });
 });

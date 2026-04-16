@@ -44,8 +44,8 @@ function WorkflowsContent() {
   const [createInput, setCreateInput] = useState<CreateWorkflowInput>({
     name: "",
     description: "",
-    source_type: "meta",
-    trigger_type: "meta.lead.created",
+    source_type: "lead_bridge",
+    trigger_type: "lead.received",
     source_config: {},
   });
   const [definitionText, setDefinitionText] = useState('{"actions":[{"type":"bitrix24.create_lead"}]}');

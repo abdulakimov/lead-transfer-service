@@ -88,7 +88,7 @@ describe('Workflows API', () => {
           {
             id: 'step-1',
             run_id: 'run-2',
-            step_key: 'trigger.meta.lead.created',
+            step_key: 'trigger.lead.received',
             status: 'completed',
           },
           {
@@ -129,7 +129,7 @@ describe('Workflows API', () => {
         rows: [
           {
             id: 'wf-10',
-            name: 'Meta to CRM',
+            name: 'Lead to CRM',
             active: true,
           },
         ],
@@ -154,16 +154,16 @@ describe('Workflows API', () => {
     const app = createApp();
     const createRes = await testRequest(app, 'POST', '/api/workflows', {
       body: {
-        name: 'Meta to CRM',
-        source_type: 'meta',
-        trigger_type: 'meta.lead.created',
+        name: 'Lead to CRM',
+        source_type: 'lead_bridge',
+        trigger_type: 'lead.received',
       },
     });
     expect(createRes.status).toBe(201);
 
     const versionRes = await testRequest(app, 'POST', '/api/workflows/wf-10/versions', {
       body: {
-        definition: { trigger: { type: 'meta.lead.created' }, actions: [{ type: 'bitrix24.create_lead' }] },
+        definition: { trigger: { type: 'lead.received' }, actions: [{ type: 'bitrix24.create_lead' }] },
       },
     });
     expect(versionRes.status).toBe(201);
@@ -190,7 +190,15 @@ describe('Workflows API', () => {
 
   it('dispatches published workflow via runtime service', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'wf-30', user_id: 'user-1', source_config: { integration_id: 'int-1' } }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'wf-30',
+          user_id: 'user-1',
+          source_type: 'lead_bridge',
+          trigger_type: 'lead.received',
+          source_config: { integration_id: 'int-1' },
+        }],
+      })
       .mockResolvedValueOnce({
         rows: [{ id: 'ver-pub-1', version: 1, definition: { actions: [{ type: 'bitrix24.create_lead' }] } }],
       });
@@ -220,5 +228,19 @@ describe('Workflows API', () => {
         triggerEventId: 'leadgen-30',
       }),
     );
+  });
+
+  it('rejects deprecated meta trigger workflow creation', async () => {
+    const app = createApp();
+    const res = await testRequest(app, 'POST', '/api/workflows', {
+      body: {
+        name: 'Old meta workflow',
+        source_type: 'meta',
+        trigger_type: 'meta.lead.created',
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('meta.* triggerlar qo\'llab-quvvatlanmaydi');
   });
 });

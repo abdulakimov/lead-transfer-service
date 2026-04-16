@@ -12,14 +12,12 @@ import {
   Link2,
   ListOrdered,
   LogOut,
-  Settings2,
   SquareStack,
   Wrench,
   Zap,
   type LucideIcon,
 } from "lucide-react";
 import { clearSession, getAccessToken, getSessionUser } from "@/lib/session";
-import { TRACKING_ENABLED } from "@/lib/feature-flags";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import brandLogoNoText from "@/asstes/brand/logo-no-text-cropped.png";
@@ -42,7 +40,6 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/leads", label: "Lidlar", icon: Database },
   { href: "/integrations", label: "Integratsiyalar", icon: Zap },
   { href: "/connections", label: "Ulanishlar", icon: Link2 },
-  ...(TRACKING_ENABLED ? [{ href: "/settings", label: "Tracking", icon: Settings2 as LucideIcon }] : []),
 ];
 
 function resolvePageMeta(pathname: string): PageMeta {
@@ -92,14 +89,6 @@ function resolvePageMeta(pathname: string): PageMeta {
       title: "Workflow authoring va dispatch",
       subtitle: "Versiyalangan workflow yarating, publish qiling va test run'larni yuboring.",
       icon: Wrench,
-    };
-  }
-  if (pathname.startsWith("/settings")) {
-    return {
-      eyebrow: "Tracking",
-      title: "Conversions API va Meta Pixel",
-      subtitle: "Browser tracking va server-side CAPI ni bir joydan boshqaring.",
-      icon: Settings2,
     };
   }
   if (pathname.startsWith("/analytics")) {

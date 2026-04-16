@@ -1,5 +1,9 @@
 import type pg from 'pg';
 
+export const WORKFLOW_SOURCE_TYPE = 'lead_bridge';
+export const WORKFLOW_TRIGGER_TYPE = 'lead.received';
+export const WORKFLOW_TRIGGER_STEP_KEY = 'trigger.lead.received';
+
 interface EnsureWorkflowInput {
   userId: string;
   integrationId: string;
@@ -37,12 +41,12 @@ export async function ensurePublishedWorkflowVersion(
     `SELECT id
      FROM workflows
      WHERE user_id = $1
-       AND source_type = 'meta'
-       AND trigger_type = 'meta.lead.created'
+       AND source_type = $3
+       AND trigger_type = $4
        AND source_config->>'integration_id' = $2
      ORDER BY created_at DESC
      LIMIT 1`,
-    [input.userId, input.integrationId],
+    [input.userId, input.integrationId, WORKFLOW_SOURCE_TYPE, WORKFLOW_TRIGGER_TYPE],
   );
 
   let workflowId: string;
@@ -52,12 +56,14 @@ export async function ensurePublishedWorkflowVersion(
     const createdWorkflow = await pool.query(
       `INSERT INTO workflows (
          user_id, name, description, active, source_type, trigger_type, source_config
-       ) VALUES ($1, $2, $3, true, 'meta', 'meta.lead.created', $4::jsonb)
+       ) VALUES ($1, $2, $3, true, $4, $5, $6::jsonb)
        RETURNING id`,
       [
         input.userId,
-        `System Meta -> ${input.destType} (${input.integrationId.slice(0, 8)})`,
+        `System Lead Bridge -> ${input.destType} (${input.integrationId.slice(0, 8)})`,
         'Auto-created workflow for lead processor runtime logging',
+        WORKFLOW_SOURCE_TYPE,
+        WORKFLOW_TRIGGER_TYPE,
         JSON.stringify({ integration_id: input.integrationId }),
       ],
     );
@@ -89,7 +95,7 @@ export async function ensurePublishedWorkflowVersion(
 
   const nextVersion = Number(maxVersionResult.rows[0].max_version) + 1;
   const definition = {
-    trigger: { type: 'meta.lead.created' },
+    trigger: { type: WORKFLOW_TRIGGER_TYPE },
     actions: [{ type: `${input.destType}.create_lead` }],
   };
 
@@ -115,12 +121,13 @@ export async function startWorkflowRun(
     `INSERT INTO workflow_runs (
        workflow_id, workflow_version_id, trigger_event_id, source_type, source_ref,
        status, attempts, context, started_at
-     ) VALUES ($1, $2, $3, 'meta', $4, 'running', $5, $6::jsonb, NOW())
+     ) VALUES ($1, $2, $3, $4, $5, 'running', $6, $7::jsonb, NOW())
      RETURNING id`,
     [
       input.workflowId,
       input.workflowVersionId,
       input.triggerEventId,
+      WORKFLOW_SOURCE_TYPE,
       input.sourceRef,
       input.attempts,
       JSON.stringify(input.context),
@@ -130,7 +137,7 @@ export async function startWorkflowRun(
   const runId = runResult.rows[0].id as string;
   const triggerStepId = await createStep(pool, {
     runId,
-    stepKey: 'trigger.meta.lead.created',
+    stepKey: WORKFLOW_TRIGGER_STEP_KEY,
     stepType: 'trigger',
     stepOrder: 1,
     attempt: input.attempts,

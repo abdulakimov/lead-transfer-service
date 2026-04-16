@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { getPool } from '../db/pool.js';
 import { AppError } from '../middleware/error-handler.js';
 import { dispatchPublishedWorkflow } from '../services/workflow-dispatch.js';
+import { WORKFLOW_SOURCE_TYPE, WORKFLOW_TRIGGER_TYPE } from '../services/workflow-runtime.js';
 
 const router = Router();
 
@@ -14,8 +15,8 @@ const runStatusSchema = z.enum(['pending', 'running', 'completed', 'failed', 'ca
 const createWorkflowSchema = z.object({
   name: z.string().min(1, 'Workflow nomi kiritilishi shart'),
   description: z.string().optional(),
-  source_type: z.string().default('meta'),
-  trigger_type: z.string().default('meta.lead.created'),
+  source_type: z.string().default(WORKFLOW_SOURCE_TYPE),
+  trigger_type: z.string().default(WORKFLOW_TRIGGER_TYPE),
   source_config: z.record(z.unknown()).default({}),
 });
 
@@ -68,6 +69,14 @@ async function findOwnedWorkflow(workflowId: string, userId: string) {
 router.post('/', async (req, res, next) => {
   try {
     const body = createWorkflowSchema.parse(req.body);
+    const sourceType = body.source_type.trim();
+    const triggerType = body.trigger_type.trim();
+    if (sourceType.startsWith('meta') || triggerType.startsWith('meta.')) {
+      throw new AppError(
+        400,
+        'meta.* triggerlar qo\'llab-quvvatlanmaydi. source_type=lead_bridge va trigger_type=lead.received dan foydalaning.',
+      );
+    }
     const pool = getPool();
     const result = await pool.query(
       `INSERT INTO workflows (
@@ -78,8 +87,8 @@ router.post('/', async (req, res, next) => {
         req.user!.userId,
         body.name,
         body.description ?? null,
-        body.source_type,
-        body.trigger_type,
+        sourceType,
+        triggerType,
         JSON.stringify(body.source_config),
       ],
     );
@@ -194,6 +203,12 @@ router.post('/:id/dispatch', async (req, res, next) => {
   try {
     const body = dispatchSchema.parse(req.body);
     const workflow = await findOwnedWorkflow(req.params.id, req.user!.userId);
+    if (workflow.source_type.startsWith('meta') || workflow.trigger_type.startsWith('meta.')) {
+      throw new AppError(
+        400,
+        'Ushbu workflow meta.* triggerdan foydalanadi va endi qo\'llab-quvvatlanmaydi. Yangi workflow yarating: source_type=lead_bridge, trigger_type=lead.received.',
+      );
+    }
     const pool = getPool();
 
     const versionResult = await pool.query(

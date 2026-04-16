@@ -159,30 +159,6 @@ test("integration settings page renders schema-driven editor and submits update"
     });
   });
 
-  await page.route("**/api/meta-pixel/config", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ configs: [] }),
-    });
-  });
-
-  await page.route("**/api/meta-pixel/events", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ event: null }),
-    });
-  });
-
-  await page.route("**/api/meta-capi/events", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ queued: false }),
-    });
-  });
-
   await page.goto("/login");
   await page.locator("#email").fill("test@leadflow.uz");
   await page.locator("#password").fill("password123");
@@ -197,10 +173,10 @@ test("integration settings page renders schema-driven editor and submits update"
 
   const titleInput = page.locator('input[value="Meta -> Bitrix Sales"]').first();
   await expect(titleInput).toBeVisible();
-  await expect(page.getByText("Field mapping")).toBeVisible();
-  await expect(page.getByText("Xurshidbek Abdulakimov")).toBeVisible();
+  await page.getByRole("button", { name: "Mapping" }).click();
+  await expect(page.getByRole("heading", { name: "Mapping" })).toBeVisible();
 
-  const saveButton = page.getByRole("button", { name: "Saqlash" });
+  const saveButton = page.getByRole("button", { name: "Saqlash" }).first();
   await expect(saveButton).toBeDisabled();
 
   await titleInput.fill("Meta -> Bitrix Sales Updated");
